@@ -21,10 +21,23 @@ stdvbot/
   metrics.py     Sharpe, Sortino, max drawdown, Calmar, win rate, profit factor
   data.py        CSV loader + offline synthetic OHLCV generator
   cli.py         `python -m stdvbot.cli ...`
+  legs.py        manipulation-leg detection + inverse-Fibonacci levels (WIP, see docs/)
+  poi.py         session/daily high-low POI tracking + liquidity-sweep detection (WIP)
 examples/
   run_backtest.py   compares all bundled strategies side by side
 tests/                  pytest suite (pattern shapes, backtest math, strategies)
+docs/
+  manipulation_leg_strategy.md   spec for the manipulation-leg/liquidity-sweep
+                                  strategy legs.py and poi.py implement — still WIP,
+                                  see its TODOs before treating it as tradeable
 ```
+
+> **Work in progress:** `legs.py` and `poi.py` implement the well-defined
+> primitives of a manipulation-leg / liquidity-sweep strategy (see
+> `docs/manipulation_leg_strategy.md`), but do **not** yet wire into
+> `strategies.py`/`backtest.py` — several rules (confluence, regime
+> gating, stop/target placement) are still open questions documented in
+> that spec's TODOs.
 
 ## Install
 
