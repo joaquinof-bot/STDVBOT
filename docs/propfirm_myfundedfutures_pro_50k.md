@@ -13,6 +13,7 @@ to maximize pass rate) is still not built.
 |---|---|---|
 | Account size | $50,000 | confirmed |
 | Max Loss Limit (max drawdown) | **$2,000 flat** | confirmed — resolves the earlier 3%-vs-$2,000 discrepancy in favor of the flat dollar figure |
+| Drawdown lock point | **$52,100** | confirmed — note this is $100 *above* the naive `starting_balance + MLL` sum ($52,000), not equal to it |
 | Daily loss limit | None | confirmed |
 | Profit target | $3,000 | confirmed |
 | Consistency rule | 50% — no single day's profit may exceed 50% of total evaluation profit | confirmed |
@@ -20,12 +21,10 @@ to maximize pass rate) is still not built.
 
 ## Still open / lower priority
 
-- **Drawdown mechanics**: whether the $2,000 MLL trails equity intraday,
-  trails only at end-of-day, or locks once equity crosses a threshold
-  (earlier research suggested EOD-trailing with a lock around $52,000
-  equity) — not yet re-confirmed against the flat-dollar figure above.
-  Matters for exactly how `stdvbot/propfirm.py` tracks the floor, but
-  doesn't block getting started.
+- **Drawdown trailing granularity**: whether the $2,000 MLL trails equity
+  intraday or only at end-of-day (`stdvbot/propfirm.py` currently models
+  EOD-only) — not explicitly reconfirmed, though the lock point itself
+  now is (above).
 - **Minimum trading days**: researched as 2, not explicitly reconfirmed.
 - **Algorithmic/automated trading permission**: not yet confirmed whether
   MyFundedFutures' current ruleset for this evaluation type permits

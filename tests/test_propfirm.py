@@ -16,6 +16,35 @@ def test_mff_pro_50k_config():
     assert MFF_PRO_50K.daily_loss_limit is None
     assert MFF_PRO_50K.consistency_rule_pct == pytest.approx(0.5)
     assert MFF_PRO_50K.min_trading_days == 2
+    # Confirmed lock point is $52,100 -- $100 above the naive
+    # starting_balance + max_loss_limit sum ($52,000). Don't let this
+    # regress back to the naive sum.
+    assert MFF_PRO_50K.drawdown_lock_point == pytest.approx(52_100.0)
+
+
+def test_drawdown_lock_point_defaults_to_start_plus_mll_when_unset():
+    rules = PropFirmRules(
+        name="test", starting_balance=50_000.0, max_loss_limit=2_000.0,
+        profit_target=3_000.0,
+    )
+    # Peak at 52,050 -- above the naive 52,000 sum. With no explicit lock
+    # point, the default (start + MLL = 52,000) caps the high-water mark
+    # there, so the floor is 50,000 and a drop to 50,050 should NOT breach.
+    equity = _equity([50_000, 52_050, 50_050])
+    outcome = check_compliance(equity, rules)
+    assert outcome.status == "in_progress"
+
+
+def test_mff_lock_point_52100_differs_from_naive_52000_sum():
+    # Peak at 52,080 -- between the naive sum (52,000) and the confirmed
+    # lock point (52,100), so it must NOT be capped: hwm stays at 52,080,
+    # floor = 52,080 - 2,000 = 50,080. A drop to 50,050 is below that
+    # floor and must breach -- a case where using the naive 52,000 lock
+    # would have (wrongly) let it slide.
+    equity = _equity([50_000, 52_080, 50_050])
+    outcome = check_compliance(equity, MFF_PRO_50K)
+    assert outcome.status == "failed_mll"
+    assert outcome.outcome_date == equity.index[2]
 
 
 def test_check_compliance_passes_with_balanced_days():

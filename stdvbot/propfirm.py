@@ -32,15 +32,22 @@ class PropFirmRules:
     daily_loss_limit: Optional[float] = None
     consistency_rule_pct: Optional[float] = None  # max single-day profit share of total, during eval
     min_trading_days: int = 0
+    #: Equity level at which the trailing high-water mark stops advancing
+    #: (the drawdown floor locks in place beyond this point). Defaults to
+    #: ``starting_balance + max_loss_limit`` if not given explicitly --
+    #: some firms pad this with an extra buffer, so don't assume the sum
+    #: is exact without checking (see MFF_PRO_50K below).
+    drawdown_lock_point: Optional[float] = None
 
 
 #: MyFundedFutures Pro plan, $50,000 account. Confirmed by the account
 #: holder 2026-08-14 (see docs/propfirm_myfundedfutures_pro_50k.md): $2,000
 #: MLL, $3,000 target, no daily loss limit, 50% consistency rule, 80/20
-#: split (split isn't modeled here, only compliance mechanics are).
-#: ``min_trading_days`` and the MLL-trail/lock mechanic (below) are
-#: ASSUMED DEFAULTs from background research, not reconfirmed — see the
-#: doc's "still open" section.
+#: split (split isn't modeled here, only compliance mechanics are), and a
+#: confirmed drawdown lock point of $52,100 -- note this is $100 *above*
+#: starting_balance + max_loss_limit ($52,000), not equal to it.
+#: ``min_trading_days`` is still an ASSUMED DEFAULT from background
+#: research, not reconfirmed — see the doc's "still open" section.
 MFF_PRO_50K = PropFirmRules(
     name="MyFundedFutures Pro 50K",
     starting_balance=50_000.0,
@@ -49,6 +56,7 @@ MFF_PRO_50K = PropFirmRules(
     daily_loss_limit=None,
     consistency_rule_pct=0.5,
     min_trading_days=2,
+    drawdown_lock_point=52_100.0,
 )
 
 
@@ -69,16 +77,20 @@ def check_compliance(daily_equity: pd.Series, rules: PropFirmRules) -> EvalOutco
 
     Max-loss-limit is modeled as an EOD-trailing floor that trails the
     high-water mark up but locks once the high-water mark reaches
-    ``starting_balance + max_loss_limit`` (a common prop-firm mechanic;
-    ASSUMED for this firm specifically, not reconfirmed — see spec doc).
-    A day only counts toward ``min_trading_days`` if equity moved at all
-    that day (a proxy for "a trade happened," not an exact rule read).
+    ``rules.drawdown_lock_point`` (defaults to
+    ``starting_balance + max_loss_limit`` if not set explicitly). A day
+    only counts toward ``min_trading_days`` if equity moved at all that
+    day (a proxy for "a trade happened," not an exact rule read).
     """
     if daily_equity.empty:
         return EvalOutcome("in_progress", None, 0, rules.starting_balance, 0.0, 0.0)
 
     hwm = rules.starting_balance
-    lock_point = rules.starting_balance + rules.max_loss_limit
+    lock_point = (
+        rules.drawdown_lock_point
+        if rules.drawdown_lock_point is not None
+        else rules.starting_balance + rules.max_loss_limit
+    )
     days_traded = 0
     profits_by_day = []
     prev_equity = rules.starting_balance
