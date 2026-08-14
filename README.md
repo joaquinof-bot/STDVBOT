@@ -23,13 +23,17 @@ stdvbot/
   cli.py         `python -m stdvbot.cli ...`
   legs.py        manipulation-leg detection + inverse-Fibonacci levels (WIP, see docs/)
   poi.py         session/daily high-low POI tracking + liquidity-sweep detection (WIP)
+  propfirm.py    prop-firm evaluation compliance checking + walk-forward pass-rate estimate
 examples/
-  run_backtest.py   compares all bundled strategies side by side
+  run_backtest.py          compares all bundled strategies side by side
+  run_propfirm_backtest.py estimates a MyFundedFutures Pro 50K pass rate for a strategy
 tests/                  pytest suite (pattern shapes, backtest math, strategies)
 docs/
   manipulation_leg_strategy.md   spec for the manipulation-leg/liquidity-sweep
                                   strategy legs.py and poi.py implement — still WIP,
                                   see its TODOs before treating it as tradeable
+  propfirm_myfundedfutures_pro_50k.md   MyFundedFutures Pro 50K rules propfirm.py
+                                         is built against
 ```
 
 > **Work in progress:** `legs.py` and `poi.py` implement the well-defined

@@ -1,9 +1,11 @@
-# MyFundedFutures — Pro Plan, $50K Account — Rule Reference (future phase)
+# MyFundedFutures — Pro Plan, $50K Account — Rule Reference
 
-For the planned prop-firm evaluation compliance/optimization phase (after
-the manipulation-leg strategy itself is finished — see
-`manipulation_leg_strategy.md`). **Not yet built, no code depends on this
-doc.**
+For the prop-firm evaluation compliance/optimization phase. Compliance
+checking (`stdvbot/propfirm.py`) is built and tested against the numbers
+below — it did not end up needing to wait for the manipulation-leg
+strategy or live pipeline (see `manipulation_leg_strategy.md`); it works
+on any backtest's equity curve. The optimizer layer (tuning risk/sizing
+to maximize pass rate) is still not built.
 
 ## Confirmed parameters (from the account holder, 2026-08-14)
 
@@ -42,13 +44,20 @@ doc.**
 
 ## Where this fits in the roadmap
 
-1. Manipulation-leg strategy (current focus) — in progress.
+1. Manipulation-leg strategy — in progress.
 2. Live automation pipeline (`stdvbot/live.py`, `stdvbot/execution.py`) —
    not started.
-3. **Prop-firm evaluation compliance & risk optimization** (this doc) — not
-   started. Once the strategy and live pipeline exist, this phase adds a
-   compliance checker (does a given trade sequence pass MFF's Pro 50K
-   rules?) and an optimizer (tune risk-per-trade/sizing to maximize
-   probability of passing, treating the firm's rules — $2,000 MLL, $3,000
-   target, 50% consistency rule, no DLL — as hard constraints rather than
-   optimizing raw return/Sharpe).
+3. **Prop-firm evaluation compliance & risk optimization** — **compliance
+   checking started** (`stdvbot/propfirm.py`): `check_compliance()`
+   replays a daily equity curve against these rules and reports
+   passed/failed_mll/failed_daily_loss/in_progress; `pass_rate()` gets a
+   walk-forward "pass %" by replaying the rules across many overlapping
+   windows of a longer equity history (a walk-forward estimate over one
+   historical path, not a full Monte Carlo resample — see the module
+   docstring). Demonstrated end-to-end against the existing `composite`
+   candlestick strategy in `examples/run_propfirm_backtest.py` — this
+   doesn't need the manipulation-leg strategy or live pipeline to exist,
+   it works on any backtest's equity curve today.
+   **Not yet built**: the optimizer layer (tune risk-per-trade/sizing to
+   maximize pass rate as the actual objective, rather than reading a
+   pass rate off a strategy that wasn't tuned for it).
