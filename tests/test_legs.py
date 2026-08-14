@@ -5,7 +5,12 @@ import pytest
 
 from stdvbot.legs import (
     Leg,
+    DEFAULT_KILLZONES,
     DEFAULT_LEVEL_MULTIPLES,
+    MAX_LEG_CANDLES,
+    MIN_LEG_CANDLES,
+    MNQ_TICK_SIZE,
+    MNQ_TICK_VALUE,
     detect_leg,
     inverse_fib_levels,
     session_window,
@@ -67,6 +72,39 @@ def test_detect_leg_downward():
     assert leg.direction == "down"
     assert leg.extreme_price == pytest.approx(97.5)
     assert leg.num_candles == 2
+    assert leg.is_valid is False  # below MIN_LEG_CANDLES (3)
+
+
+def test_leg_validity_boundaries():
+    def _leg(num_candles):
+        return Leg(
+            origin_time=pd.Timestamp("2024-01-01 20:00"),
+            origin_price=100.0,
+            extreme_time=pd.Timestamp("2024-01-01 20:05"),
+            extreme_price=105.0,
+            num_candles=num_candles,
+            direction="up",
+        )
+
+    assert MIN_LEG_CANDLES == 3
+    assert MAX_LEG_CANDLES == 5
+    assert _leg(1).is_valid is False
+    assert _leg(2).is_valid is False
+    assert _leg(3).is_valid is True
+    assert _leg(4).is_valid is True
+    assert _leg(5).is_valid is True
+    assert _leg(6).is_valid is False
+
+
+def test_default_killzones_are_asia_and_ny_only():
+    assert set(DEFAULT_KILLZONES) == {"asia", "ny"}
+    assert DEFAULT_KILLZONES["asia"]["start"] == time(20, 0)
+    assert DEFAULT_KILLZONES["ny"]["start"] == time(9, 30)
+
+
+def test_mnq_contract_specs():
+    assert MNQ_TICK_SIZE == pytest.approx(0.25)
+    assert MNQ_TICK_VALUE == pytest.approx(0.50)
 
 
 def test_detect_leg_empty_window_returns_none():

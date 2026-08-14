@@ -2,49 +2,50 @@
 
 This document consolidates the trading methodology as explained so far, so it
 doesn't live only in chat scrollback. It is **not fully implemented yet** —
-sections marked `ASSUMPTION` or `TODO` are best-effort translations of the
-English explanation into precise, codeable rules, and need to be confirmed or
-corrected. Code in `stdvbot/legs.py` and `stdvbot/poi.py` implements the
-parts that are well-defined; the rest is deliberately left as an open
-question rather than guessed into place.
+sections marked `TODO` are genuinely open; sections marked `ASSUMED DEFAULT`
+are deliberate choices made to keep a fully-autonomous design moving (per
+the trader's direction: full automation, no human input at trade time, WIP
+so assumptions are fine for now) and can be corrected later without
+architectural rework. Code in `stdvbot/legs.py` and `stdvbot/poi.py`
+implements the parts that are well-defined.
 
 ## 1. Core idea
 
 Price is often pushed deliberately in one direction around session opens to
 trigger the wrong side of the market before reversing — a **manipulation
 leg**. The same "sweep a level, then reverse" mechanism repeats at multiple
-timeframes:
+timeframes, and — **confirmed** — it's the literal same primitive at every
+scale, not separate mechanisms:
 
-- **Daily** — a fast, impulsive daily move ("pump") tops out; that top is
-  itself a retracement opportunity.
-- **4H** — provides regime context (see §4) and refines daily bias.
+- **Daily / 4H** — a fast, impulsive move ("pump") tops out; that top is
+  itself a retracement opportunity. This *is* higher-timeframe bias: running
+  `detect_leg()` / `inverse_fib_levels()` (see §2-3) on Daily or 4H bars
+  finds the "top of the fast pump" and its retracement zone exactly the same
+  way as the 1-minute case. There is no separate trend-direction indicator —
+  only the timeframe of the input data changes.
 - **Session / daily Points of Interest (POI)** — the previous session's or
   previous day's high/low. Price tends to run (sweep) these levels — taking
   out resting liquidity — before retracing the other way.
 - **1-minute manipulation leg** — the same sweep-and-reverse mechanism,
-  anchored specifically to session open times (Asia ~20:00, NY ~9:30, in the
-  trader's local UTC-4), used for execution-level entries.
+  anchored specifically to session open times, used for execution-level
+  entries.
 
-`ASSUMPTION`: these are the same underlying primitive (sweep a level →
-reverse) applied recursively at different scales, rather than the 1-minute
-leg logic and the higher-timeframe bias being two independent mechanisms.
-**Not yet confirmed.**
+## 2. Identifying a manipulation leg
 
-## 2. Identifying a manipulation leg (1-minute)
-
-1. Only evaluated around session open windows (Asia, NY — exact windows
-   configurable; ICT-style "kill zones" are a likely source, `TODO` confirm
-   exact times/zones beyond the two observed: ~20:00 and ~9:30, UTC-4).
-2. **Off-trend filter:** a push at the open only counts as a manipulation
-   candidate if it runs counter to the prevailing higher-timeframe bias
-   (e.g., pushing up into the open during an overall bear context).
-3. **Leg validity:**
-   - A move formed by a **single fast candle** is suspect ("false leg") —
-     it may never get revisited/confirmed.
-   - A move spanning **multiple consecutive candles** (observed example: 3
-     candles) is treated as the real, tradeable leg.
-   - `TODO`: exact minimum candle count (2 vs 3), and whether there's an
-     upper bound on how many candles still count as "one leg."
+1. **Killzones in scope — confirmed**: Asia (20:00 local UTC-4) and NY
+   (09:30 local UTC-4) only. **London is explicitly excluded** — not traded.
+   `DEFAULT_KILLZONES` in `stdvbot/legs.py` encodes this.
+2. **Leg-detection window**: `ASSUMED DEFAULT` — 6 minutes from the session
+   open, sized to comfortably observe up to the confirmed max leg length
+   (see #3) plus one bar of confirmation that it stopped extending.
+3. **Off-trend filter:** a push at the open only counts as a manipulation
+   candidate if it runs counter to the prevailing higher-timeframe bias (the
+   Daily/4H leg read from §1) — e.g., pushing up into the open while the
+   Daily/4H leg implies a bearish retracement is still in play.
+4. **Leg validity — confirmed**: a leg must span **3 to 5 continuous
+   candles** (`MIN_LEG_CANDLES`/`MAX_LEG_CANDLES` in `stdvbot/legs.py`), 3
+   being typical. Fewer (typically a single fast candle) is a suspect
+   "false" leg; more than 5 is no longer treated as one leg.
 
 ## 3. Inverse Fibonacci projection & entries
 
@@ -62,10 +63,9 @@ Given a validated leg with an **origin** (start price) and **extreme**
   ```
 
   where `m` is a level multiple, observed grid: `1, 2, 2.25, 2.5, 4, 4.5`.
-  `ASSUMPTION`: this formula is inferred from the observed level labels
-  (-1, -2, -2.25, -2.5, -4, -4.5) and the worked example (leg up → enter
-  long once price falls to strike level 2.25/2.5 below the leg's origin).
-  **Not yet confirmed as the literal construction.**
+  This formula is inferred from observed level labels and a worked example
+  and has not been explicitly contradicted since — treated as confirmed
+  pending any correction.
 
 - **Trade direction**: entering **opposite the manipulation leg's own
   push** — i.e., toward whatever the leg's origin implies was the "true"
@@ -74,58 +74,88 @@ Given a validated leg with an **origin** (start price) and **extreme**
 
 ### Confidence gradient (not a single trigger)
 
-The levels are a **graded confidence zone**, not interchangeable triggers:
-
 | Zone            | Grade | Behavior |
 |-----------------|-------|----------|
-| ~2.0 – 2.5      | "B-"  | Plausible countertrend zone; **needs additional confluence** to be a real trade. Not inherently weak or strong on its own. |
-| ~4.5            | "A+"  | "Zone of no return" — near-standalone signal. Once reached, either (a) full reversal of the last price delivery, or (b) price goes stagnant and the session closes without further movement. Continuation past this point is not expected either way. |
+| ~2.0 – 2.5      | "B-"  | Plausible countertrend zone; **needs additional confluence** to be a real trade. |
+| ~4.5            | "A+"  | "Zone of no return" — near-standalone signal. Once reached, either (a) full reversal of the last price delivery, or (b) price goes stagnant and the session closes without further movement. |
 
-`TODO`:
-- Full list of qualifying **confluences** for the 2–2.5 zone (candidates:
-  candlestick patterns already in `stdvbot/candles.py`, VWAP proximity,
-  round numbers, FVGs/liquidity pools, POI confluence — not yet confirmed
-  which of these actually count).
-- Whether entry requires a **wick touch** or a **close through** the level.
-- How the backtester should score the "stays stagnant, session closes"
-  outcome at 4.5 (not a normal win/loss — currently unhandled).
-- Precise grade mapping between 2.5 and 4.5 (continuum vs. discrete
-  checkpoints).
+`ASSUMED DEFAULT` (autonomous confluence check, since there's no human to
+judge "does this look right"): score = count of these booleans passing —
+(a) a candlestick reversal pattern from `stdvbot/candles.py` fires on the
+touching candle, (b) price is within a configurable tolerance of session
+VWAP, (c) price is within a configurable tolerance of a round number, (d)
+price aligns with a POI (§4). In the B- zone, require score ≥ 2 to act; in
+"A+ only" mode (§4 regime gating) the B- zone is skipped regardless of
+score. At 4.5, act automatically, no confluence required.
+
+`ASSUMED DEFAULT`: entry triggers on a **wick touch** of the level (not
+requiring a close through).
+
+`TODO`: precise grade mapping between 2.5 and 4.5 (continuum vs. discrete
+checkpoints) — currently linear interpolation via `zone_grade()`.
 
 ## 4. Higher-timeframe context
 
-- Timeframes used: **4H and Daily**.
-- **POIs**: both session highs/lows (Asia/London/NY) *and* daily
-  highs/lows — all treated the same way as sweep targets.
-- **Regime**: the strategy performs better in a **ranging/consolidated**
-  market than a trending one. `TODO`: confirm whether trending regime
-  should fully disable entries or just reduce confidence/size, and how
-  regime itself gets classified (structural range measure vs. hand-labeled
-  examples).
+- Timeframes used: **4H and Daily** (see §1 — same leg primitive).
+- **POIs**: both session highs/lows (Asia/NY — London excluded per §2) *and*
+  daily highs/lows — all treated the same way as sweep targets.
+- **Regime — confirmed preference, gating rule assumed**: the strategy
+  performs better in a **ranging/consolidated** market. `ASSUMED DEFAULT`:
+  hard gate — on a trending 4H day, only 4.5-grade ("A+") touches are
+  eligible; the 2.0-2.5 zone is skipped entirely for the whole day,
+  regardless of confluence score.
 
-## 5. Explicitly deferred
+## 5. Autonomous operation (confirmed target: full automation, no human input at trade time)
 
-- **Re-entry / retest logic** at the 2.5 / 4.5 levels (whether it's an
-  add-on retest in the same direction, or a failed-reversal flip into
-  continuation) — deferred by the trader for a later session, not
-  implemented.
-- Stop-loss placement specific to this setup (general principle from
-  earlier discussion: stops belong beyond the structural level that
-  invalidates the idea, not a fixed percentage — exact placement for this
-  strategy specifically still TBD).
-- Profit target consistency (one observed example used session VWAP;
-  not confirmed as the universal target).
+`ASSUMED DEFAULT`s locked in to make this operable end-to-end without a
+human decision point (see chat log for full reasoning — summarized here):
 
-## 6. What's implemented so far
+- **Position sizing**: risk 1% of account equity per trade; contract count
+  derived from `risk_amount / stop_distance` using instrument tick specs.
+- **Instrument**: MNQ (Micro E-mini Nasdaq-100) — `MNQ_TICK_SIZE = 0.25`,
+  `MNQ_TICK_VALUE = 0.50` (i.e. $2.00/point). Encoded in `stdvbot/legs.py`.
+- **Max concurrent positions**: 1.
+- **Daily loss circuit breaker**: halt new entries for the rest of the day
+  once daily loss exceeds 3% of account equity.
+- **Stop**: beyond the next fib tier out from the entry level.
+- **Target**: session VWAP; if VWAP has already been passed by entry time,
+  switch to the nearest opposing POI.
+- **Stagnation handling** (the "closes flat" 4.5 outcome): auto-close at
+  market 30 minutes past session close if neither stop nor target has hit.
+- **Fail-safe**: on data feed or broker connectivity loss, auto-flatten any
+  open position and halt new entries until connectivity is confirmed
+  restored.
+- **Logging**: every decision — trades taken *and* setups auto-skipped, with
+  reason — gets logged, since no human is approving trades in real time.
 
-- `stdvbot/legs.py` — leg detection within a session window, leg-validity
-  classification (single-candle vs multi-candle), and inverse-Fibonacci
-  level projection per §3's formula.
+## 6. Explicitly deferred
+
+- **Re-entry / retest logic** at the 2.5 / 4.5 levels — deferred by the
+  trader for a later session, not implemented.
+
+## 7. Infrastructure — open, not a strategy question
+
+- **Data feed / broker**: Tradovate, for both live market data and order
+  execution. **Setup not yet done** — the trader doesn't yet know how to
+  configure Tradovate API access. Needs: registering a Tradovate developer
+  app, obtaining API credentials, deciding demo vs. live environment, and
+  wiring up their REST/WebSocket API for both market data and order
+  placement. This blocks real live operation but not further code
+  scaffolding.
+
+## 8. What's implemented so far
+
+- `stdvbot/legs.py` — leg detection within a session window, the confirmed
+  3-5 candle validity rule, inverse-Fibonacci level projection, killzone
+  config (Asia/NY only), and MNQ contract specs.
 - `stdvbot/poi.py` — session and daily high/low tracking, and a generic
   sweep-detector (wick through a level, close back on the other side) used
   for POIs at any scale.
 
-Neither module wires into `stdvbot/strategies.py`/`backtest.py` yet — the
-open TODOs above (confluence list, regime gating, stop/target rules) need
-answers before a real tradeable signal/backtest can be built on top of
-these primitives without guessing.
+**Not yet built**: the autonomous decision/execution pipeline described in
+§5 (confluence scoring, regime gating, risk/position sizing, order
+placement, trade management, safety loop) — i.e. `stdvbot/live.py` and
+`stdvbot/execution.py` don't exist yet. Also not built: applying
+`detect_leg`/`inverse_fib_levels` to resampled 4H/Daily bars for the
+higher-timeframe bias read described in §1 (the primitives support it, but
+nothing calls them that way yet).
