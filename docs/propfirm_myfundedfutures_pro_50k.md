@@ -5,46 +5,40 @@ the manipulation-leg strategy itself is finished — see
 `manipulation_leg_strategy.md`). **Not yet built, no code depends on this
 doc.**
 
-Researched via web search on 2026-08-14. The MyFundedFutures domains
-(`myfundedfutures.com`, `help.myfundedfutures.com`) were **not directly
-fetchable** in this environment (network egress blocked them) — everything
-below is compiled from third-party summaries and search-result snippets of
-MFF's own help-center articles, not a direct read of the primary source.
-**Confirm every number against the live MyFundedFutures dashboard before
-any of this is used for a real risk decision or gets coded into
-`stdvbot/propfirm.py`.**
+## Confirmed parameters (from the account holder, 2026-08-14)
 
-## Researched parameters (evaluation phase, Pro plan, $50,000 account)
-
-| Parameter | Value found | Confidence |
+| Parameter | Value | Source |
 |---|---|---|
-| Account size | $50,000 | high |
-| Max drawdown | **Conflicting**: one source says 3% (~$1,500), another says a fixed $2,000 (4%), trailing floor locking once equity reaches $52,000 | **low — needs direct confirmation, this is the load-bearing constraint** |
-| Drawdown type | End-of-day trailing (recalculated at day close, not intraday) | medium |
-| Daily loss limit | None, evaluation or funded | medium-high (multiple sources agree) |
-| Profit target | ~6% (~$3,000) | medium |
-| Minimum trading days | 2 | medium |
-| Consistency rule | 50% — no single day's profit may exceed 50% of total evaluation profit; drops to a qualitative "Consistent Trading Policy" once funded (no hard %) | medium |
-| Profit split (funded) | 80/20 | low-medium |
+| Account size | $50,000 | confirmed |
+| Max Loss Limit (max drawdown) | **$2,000 flat** | confirmed — resolves the earlier 3%-vs-$2,000 discrepancy in favor of the flat dollar figure |
+| Daily loss limit | None | confirmed |
+| Profit target | $3,000 | confirmed |
+| Consistency rule | 50% — no single day's profit may exceed 50% of total evaluation profit | confirmed |
+| Profit split (funded) | 80/20 | confirmed |
+
+## Still open / lower priority
+
+- **Drawdown mechanics**: whether the $2,000 MLL trails equity intraday,
+  trails only at end-of-day, or locks once equity crosses a threshold
+  (earlier research suggested EOD-trailing with a lock around $52,000
+  equity) — not yet re-confirmed against the flat-dollar figure above.
+  Matters for exactly how `stdvbot/propfirm.py` tracks the floor, but
+  doesn't block getting started.
+- **Minimum trading days**: researched as 2, not explicitly reconfirmed.
+- **Algorithmic/automated trading permission**: not yet confirmed whether
+  MyFundedFutures' current ruleset for this evaluation type permits
+  algorithmic trading at all — this is a fact only the account holder (or
+  MFF support) can confirm, not something research can settle. Worth
+  checking before betting the full-automation plan (see
+  `manipulation_leg_strategy.md` §5) on this account.
 
 ## Sources
-- [MyFundedFutures Rules Overview 2026 — PropTradingVibes](https://proptradingvibes.com/blog/myfundedfutures-rules-overview)
-- [My Funded Futures Rules: Drawdown & Targets (2026) — TradingToolsHub](https://tradingtoolshub.com/blog/my-funded-futures-rules-explained/)
-- Search-result snippets referencing MFF's own help-center articles
-  (titles only, pages not fetchable here): "Consistency Rule at My Funded
-  Futures," "Understanding Evaluation Parameters at MyFunded Futures,"
-  "Pro Plan Sim-Funded and Live Account Highlights," "Rules: Trailing Max
-  Drawdowns / Risk Parameters Explained."
-
-## Why the drawdown discrepancy matters
-
-Whether max drawdown is a **percentage of starting balance**, a **fixed
-dollar amount**, or a value that **locks once equity crosses a
-threshold** changes how the constraint gets coded in the future compliance
-checker (`stdvbot/propfirm.py`, not yet started) — a percentage-of-balance
-rule and a fixed-dollar rule diverge as the account grows, and a locking
-rule needs its own state tracking. Get the exact current rule from the
-dashboard before that module is built; don't build against a guess here.
+- Primary: account holder, direct confirmation (2026-08-14).
+- Background research (superseded above where they conflicted):
+  [MyFundedFutures Rules Overview 2026 — PropTradingVibes](https://proptradingvibes.com/blog/myfundedfutures-rules-overview),
+  [My Funded Futures Rules: Drawdown & Targets (2026) — TradingToolsHub](https://tradingtoolshub.com/blog/my-funded-futures-rules-explained/).
+  `myfundedfutures.com`/`help.myfundedfutures.com` were not directly
+  fetchable in this environment (network egress blocked them).
 
 ## Where this fits in the roadmap
 
@@ -55,5 +49,6 @@ dashboard before that module is built; don't build against a guess here.
    started. Once the strategy and live pipeline exist, this phase adds a
    compliance checker (does a given trade sequence pass MFF's Pro 50K
    rules?) and an optimizer (tune risk-per-trade/sizing to maximize
-   probability of passing, treating the firm's rules as hard constraints
-   rather than optimizing raw return/Sharpe).
+   probability of passing, treating the firm's rules — $2,000 MLL, $3,000
+   target, 50% consistency rule, no DLL — as hard constraints rather than
+   optimizing raw return/Sharpe).
