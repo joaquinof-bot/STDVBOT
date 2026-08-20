@@ -8,17 +8,32 @@ operating procedure, and the analysis plan — is in
 
 ## Status
 
+This is a **historical simulation study**. No brokerage account is connected and no
+orders are transmitted anywhere. See [`docs/ISEF_PROCEDURES.md`](docs/ISEF_PROCEDURES.md)
+for the full protocol.
+
 | Component | State |
 | --- | --- |
 | Configuration and risk parameters (`stdvbot/config.py`) | done |
-| Tradovate connection: auth, accounts, orders, flatten, health (`stdvbot/tradovate.py`) | done |
+| Bars, session arithmetic, resampling, CSV loading (`stdvbot/bars.py`) | done |
+| Candlestick reversal patterns (`stdvbot/candles.py`) | done |
+| Tradovate connection (`stdvbot/tradovate.py`) | built, **not used by the study** |
 | `stdvbot check-connection` (`stdvbot/cli.py`) | done |
-| Market data feed (1m / 4H / Daily) | not built |
-| Candlestick patterns (`stdvbot/candles.py`) | not built |
 | HTF bias and regime classification | not built |
-| Leg watcher and inverse-Fibonacci grid | not built |
+| Leg detection and inverse-Fibonacci grid | not built |
+| Session VWAP and POI computation | not built |
 | Confluence scoring and trade decision | not built |
-| Decision log and CSV export | not built |
+| Backtest engine and decision log | not built |
+| `stdvbot verify-data` / `export-log` | not built |
+
+### On the Tradovate module
+
+`stdvbot/tradovate.py` is complete and tested, but the study does not use it. Tradovate
+issues API keys only to live accounts holding over $1,000, and prop-firm accounts are
+excluded from that path entirely. Prop firms including Apex also prohibit fully
+autonomous bots that manage both entry and exit — which is exactly what this system is.
+The module is kept because it is finished and may serve a future personally-funded
+simulation account, but nothing in the experimental protocol depends on it.
 
 ## Setup
 

@@ -14,267 +14,226 @@ significantly greater than a direction-randomized control (α = 0.05), because
 counter-bias session-open legs represent liquidity sweeps that mean-revert more often
 than they continue.
 
+## Study Design
+This is a **historical simulation study**. All three arms are evaluated by replaying
+24 months of archived 1-minute price data through the decision system. No live
+brokerage account is connected, no orders are transmitted to any exchange, and no
+capital — real or simulated — is placed at risk at any point.
+
+Running all arms over the identical historical period is a methodological advantage
+over live forward testing: every arm sees exactly the same market conditions, which
+removes the confound of arms trading different weeks.
+
 ## Variables
 
 **Independent variable (manipulated):** trade-eligibility gating mode, with three levels
-run as separate experimental arms —
+run as separate experimental arms over the same data —
 - Arm 1: regime-gated (strict on trending days, permissive on ranging days)
 - Arm 2: permissive always (no regime gate; all levels eligible every day)
 - Arm 3: direction-randomized control (identical setups detected, entry direction assigned
-  by pseudorandom coin flip with fixed seed)
+  by seeded pseudorandom coin flip)
 
 **Dependent variables (measured):** per-trade return in R-multiples; win rate; profit
 factor; maximum peak-to-trough drawdown as % of equity; expectancy per trade; count of
 each auto-skip reason code.
 
 **Controlled variables (held constant across all arms):** instrument (MNQ, Micro E-mini
-Nasdaq-100 continuous front month); risk per trade (1.0% of equity); maximum concurrent
+Nasdaq-100); historical period; risk per trade (1.0% of equity); maximum concurrent
 positions (1); daily loss circuit breaker (3.0% of start-of-day equity); stop placement
 (next inverse-Fibonacci tier beyond entry level); target rule (session VWAP, or nearest
 opposing POI if VWAP already passed); stagnant-trade cutoff (30 minutes past session
-close); session-open windows (Asia 18:00–19:00 ET, New York 09:30–10:30 ET); data
-source; commission and slippage model (1 tick slippage per fill, $0.74 round-turn
-commission).
+close); session-open windows (Asia 18:00–19:00 ET, New York 09:30–10:30 ET); starting
+equity; slippage model (1 tick per fill); commission ($0.74 round turn).
 
-**Study period:** Phase 1 — 24 months of historical backtest data. Phase 2 — 60
-consecutive trading days of live forward testing on a Tradovate **simulation
-(demo) account**. Target sample: n ≥ 100 completed trades per arm.
+**Sample:** 24 months of 1-minute data. Target n ≥ 100 completed trades per arm.
 
 ## Safety and Ethics
-This study is conducted entirely on a Tradovate **simulation account funded with
-non-redeemable virtual currency**. No real capital is deployed at any point, and no
-real financial risk exists for the researcher or any other party. API credentials are
-stored in a local environment file that is excluded from version control and never
-committed, transmitted, or published. The system is supervised by a qualified adult
-supervisor who has read-only access to the trade log. Conversion to a live-funded
-account is explicitly out of scope for this study.
+No brokerage account is connected to this system and no orders are transmitted anywhere.
+The study operates exclusively on archived historical price files, so there is no
+financial risk to the researcher or any other party, and no possibility of market impact.
+
+The researcher holds a prop-firm evaluation-style simulated account. That account is
+**deliberately excluded** from this study. Prop firms including Apex prohibit fully
+autonomous bots that manage both entry and exit without human involvement, with account
+termination as the stated penalty; connecting this system to such an account would
+violate those terms. The backtest design avoids this entirely.
+
+Should any future extension connect to a broker, it must use a personal simulation
+account under adult supervision, never a prop-firm account, and that extension is
+outside the scope of this study.
 
 ## Materials
-- Server or always-on computer, Linux, ≥ 4 GB RAM, wired or stable network connection
-- Python 3.11 or later
+- Computer capable of running Python 3.11 or later
 - STDVBOT package (this repository)
-- Tradovate simulation account with API access enabled
-- Market data subscription providing 1-minute, 4-hour, and daily candles for MNQ
-- Local disk storage for the decision log (≥ 1 GB)
+- 24 months of 1-minute OHLCV data for MNQ, in CSV form, obtained from a historical
+  data vendor
+- Approximately 2 GB of free disk space for data and result files
+- No brokerage account, no API credentials, and no market data subscription
 
 ---
 
 ## Procedure
 
-### Setup (performed once, by a human)
+### Part A — Setup (performed once, by a human)
 
-1. Install Python 3.11+ on the host machine and verify the version with `python3 --version`.
+1. Install Python 3.11 or later and confirm the version with `python3 --version`.
 
-2. Clone the STDVBOT repository to the host machine and install it with
-   `pip install -e .` from the repository root.
+2. Clone the STDVBOT repository and install it with `pip install -e .` from the
+   repository root.
 
-3. Create a Tradovate simulation account and enable API access for it. Record the
-   username, password, application ID, application version, API key (`cid`), and API
-   secret (`sec`).
+3. Purchase and download 24 months of 1-minute OHLCV data for MNQ from a historical
+   data vendor. Save the CSV to `data/mnq_1m.csv`.
 
-4. Copy `.env.example` to `.env` and enter the six credential values from step 3.
-   Confirm `.env` is listed in `.gitignore` so credentials are never committed.
+4. Confirm the CSV has six columns in the order timestamp, open, high, low, close,
+   volume, and that timestamps are US Eastern. Record the vendor, product, and
+   download date in the lab notebook; this is the study's data provenance.
 
-5. Set `TRADOVATE_ENV=demo` in `.env`. Verify that this value is `demo` and not
-   `live` before proceeding; this is the control that guarantees no real capital
-   is at risk.
+5. Run `stdvbot verify-data data/mnq_1m.csv` and confirm it reports the expected date
+   range, the total bar count, and zero malformed rows. Do not proceed if any session
+   date is missing more than 10% of its expected bars.
 
-6. Set the instrument under test by entering `STDVBOT_SYMBOL=MNQ` in `.env`.
+6. Set the strategy parameters in `.env`: `STDVBOT_SYMBOL=MNQ`,
+   `STDVBOT_RISK_PER_TRADE_PCT=1.0`, `STDVBOT_MAX_CONCURRENT_POSITIONS=1`,
+   `STDVBOT_DAILY_LOSS_LIMIT_PCT=3.0`, `STDVBOT_CONFLUENCE_THRESHOLD=2`,
+   `STDVBOT_STAGNANT_CUTOFF_MINUTES=30`, and the three tolerance values.
 
-7. Set `STDVBOT_RISK_PER_TRADE_PCT=1.0`. This fixes the amount of account equity
-   placed at risk on any single trade at one percent.
+7. Record every parameter value in the lab notebook. These are the controlled
+   variables and must not change while any arm is running.
 
-8. Set `STDVBOT_MAX_CONCURRENT_POSITIONS=1`. This prevents the system from holding
-   more than one position at any time.
+8. Select the arm for this run with `STDVBOT_ARM=regime_gated`,
+   `STDVBOT_ARM=permissive`, or `STDVBOT_ARM=random_control`.
 
-9. Set `STDVBOT_DAILY_LOSS_LIMIT_PCT=3.0`. This defines the circuit breaker: once
-   the sum of realized and unrealized loss for the day reaches three percent of
-   start-of-day equity, no new entries are permitted until the next session date.
+### Part B — Simulated decision cycle (performed by the system, per session date)
 
-10. Set `STDVBOT_CONFLUENCE_THRESHOLD=2`, `STDVBOT_STAGNANT_CUTOFF_MINUTES=30`, and
-    the three tolerance values `STDVBOT_VWAP_TOLERANCE_TICKS`,
-    `STDVBOT_ROUND_NUMBER_TOLERANCE_TICKS`, and `STDVBOT_POI_TOLERANCE_TICKS`.
-    Record every value entered in the lab notebook; these constitute the
-    controlled variables and must not be altered during a study arm.
+The system replays each session date in the dataset in chronological order, seeing
+only data available up to the moment being simulated. It never reads a future bar.
 
-11. Run `stdvbot check-connection` and confirm that it reports successful
-    authentication, a non-empty account list, and a positive cash balance. Do not
-    proceed if any of the three fails.
+9. For the session date being simulated, load all closed 4-hour and daily bars
+   preceding it.
 
-12. Run `stdvbot check-feed` and confirm that 1-minute, 4-hour, and daily candles
-    are being received for the configured symbol. Do not proceed if any timeframe
-    is missing.
+10. Compute the higher-timeframe bias from those bars, recorded as `bullish` or
+    `bearish`.
 
-13. Set the experimental arm for this run by entering `STDVBOT_ARM=regime_gated`,
-    `STDVBOT_ARM=permissive`, or `STDVBOT_ARM=random_control` in `.env`. Run only
-    one arm at a time; complete its full 60-day period before switching.
+11. Classify the day's regime from the 4-hour bars, recorded as `trending` or
+    `ranging`.
 
-14. Start the system as a persistent background service with
-    `systemctl --user start stdvbot`, so that it continues running after logout
-    and restarts automatically after a reboot.
+12. If the arm is `regime_gated` and the regime is `trending`, set the day's mode to
+    `A+ only`: only levels graded 4.5 are eligible, and every level graded 2.0–2.5 is
+    skipped without exception.
 
-15. Record the start date, start-of-study equity, arm name, and full configuration
-    hash in the lab notebook. Take no further manual action until the arm's 60
-    trading days have elapsed.
+13. If the arm is `regime_gated` and the regime is `ranging`, set the day's mode to
+    `full`: levels graded 4.5 and 2.0–2.5 are both eligible.
 
-### Daily automated cycle (performed by the system, unattended)
+14. If the arm is `permissive` or `random_control`, set the mode to `full` regardless
+    of regime. This is the manipulation of the independent variable.
 
-16. Once per day, before the first session opens, the system downloads the most
-    recent closed 4-hour and daily candles for the configured symbol.
+15. Compute the day's points of interest as fixed prices: prior day high, prior day
+    low, prior Asia session high and low, prior New York session high and low.
 
-17. From those candles it computes a higher-timeframe bias, recorded as either
-    `bullish` or `bearish`.
+16. For each session window in order (Asia, then New York), collect the 1-minute bars
+    inside that window. This group is the leg.
 
-18. From the 4-hour candles it classifies the day's regime, recorded as either
-    `trending` or `ranging`.
+17. If the leg consists of exactly one bar, discard it and log `single_candle_leg`.
 
-19. If the arm is `regime_gated` and the regime is `trending`, the system sets the
-    day's mode to `A+ only`, under which only levels graded 4.5 are eligible to
-    trade and every level graded 2.0–2.5 is skipped automatically without exception.
+18. If the leg consists of two or more bars, compare its direction to the bias from
+    step 10.
 
-20. If the arm is `regime_gated` and the regime is `ranging`, the system sets the
-    day's mode to `full`, under which levels graded 4.5 and levels graded 2.0–2.5
-    are both eligible.
+19. If the leg direction matches the bias, discard it and log `agreed_with_bias`.
 
-21. If the arm is `permissive` or `random_control`, the system sets the day's mode
-    to `full` regardless of regime. This is the manipulation of the independent
-    variable.
+20. If the leg direction opposes the bias, accept it as a valid candidate.
 
-22. The system computes and stores the day's points of interest as fixed price
-    values: prior day high, prior day low, prior Asia session high and low, and
-    prior New York session high and low.
+21. Project the inverse-Fibonacci levels from the candidate leg's high and low, and
+    store them as the session's level grid.
 
-23. At the opening of each session window (Asia first, then New York), the system
-    records every 1-minute candle formed inside that window.
+22. Step forward through subsequent 1-minute bars, checking each against the grid.
 
-24. At the close of the window, the system evaluates the recorded candles as a
-    single unit called the leg.
+23. When a bar touches a level, evaluate four boolean confluence checks on that bar:
+    whether a candlestick reversal pattern fires; whether price is within tolerance of
+    session VWAP; whether price is within tolerance of a round number; and whether
+    price is within tolerance of a point of interest from step 15.
 
-25. If the leg consists of exactly one candle, the system discards it and logs the
-    reason code `single_candle_leg`.
+24. Sum the true results into a confluence score from 0 to 4, and log the score with
+    its four component results.
 
-26. If the leg consists of two or more candles, the system compares the leg's
-    direction to the higher-timeframe bias from step 17.
+25. If the level is graded 2.0–2.5 and the mode is `full`, proceed only when the score
+    is 2 or greater; otherwise skip and log `low_confluence_score`.
 
-27. If the leg direction matches the bias, the system discards it and logs the
-    reason code `agreed_with_bias`.
+26. If the level is graded 2.0–2.5 and the mode is `A+ only`, skip regardless of score
+    and log `a_plus_mode_excluded`.
 
-28. If the leg direction opposes the bias, the system accepts it as a valid
-    candidate and continues.
+27. If the level is graded 4.5, proceed regardless of mode and score.
 
-29. From the candidate leg's high and low, the system projects the inverse-Fibonacci
-    price levels and stores them as the session's level grid.
+28. Set the trade direction opposite the leg's push. In the `random_control` arm only,
+    assign direction by seeded pseudorandom coin flip and log the seed.
 
-30. The system monitors live price against every level in the grid continuously.
+29. Compute the stop price as the next inverse-Fibonacci tier beyond the entry level,
+    and the stop distance as the absolute difference between entry and stop.
 
-31. When price touches a level, the system evaluates four boolean confluence checks
-    on the touching candle: whether a candlestick reversal pattern fires; whether
-    price is within tolerance of session VWAP; whether price is within tolerance of
-    a round number; and whether price is within tolerance of a stored point of
-    interest from step 22.
+30. Compute the risk amount as 1.0% of current simulated equity, and the position size
+    as risk amount divided by stop distance, rounded down to whole contracts.
 
-32. The system sums the true results into a confluence score between 0 and 4 and
-    records the score and the four individual results in the log.
+31. If the rounded size is zero, skip and log `size_below_one_contract`.
 
-33. If the touched level is graded 2.0–2.5 and the day's mode is `full`, the system
-    proceeds only when the confluence score is 2 or greater; otherwise it skips and
-    logs the reason code `low_confluence_score`.
+32. Set the target to session VWAP; if price has already passed VWAP in the trade's
+    favor at entry, set the target to the nearest opposing point of interest instead.
 
-34. If the touched level is graded 2.0–2.5 and the day's mode is `A+ only`, the
-    system skips regardless of score and logs the reason code `a_plus_mode_excluded`.
-
-35. If the touched level is graded 4.5, the system proceeds regardless of mode and
-    score.
-
-36. The system sets the trade direction opposite to the leg's push direction. In the
-    `random_control` arm only, direction is instead assigned by a seeded pseudorandom
-    coin flip, and the seed is recorded in the log.
-
-37. The system computes the stop price as the next inverse-Fibonacci tier beyond the
-    entry level, and the stop distance as the absolute difference between entry and
-    stop.
-
-38. The system computes the risk amount as 1.0% of current account equity, and the
-    position size as the risk amount divided by the stop distance, rounded down to
-    the nearest whole contract.
-
-39. If the rounded position size is zero, the system skips the trade and logs the
-    reason code `size_below_one_contract`.
-
-40. The system sets the target price to the session VWAP; if price has already
-    passed VWAP in the trade's favor at the moment of entry, it instead sets the
-    target to the nearest opposing point of interest.
-
-41. Before submitting, the system verifies that the daily loss circuit breaker has
-    not tripped. If it has, the trade is skipped and logged with the reason code
+33. Verify the daily loss circuit breaker has not tripped; if it has, skip and log
     `circuit_breaker_tripped`.
 
-42. Before submitting, the system verifies that no position is already open. If one
-    is, the trade is skipped and logged with the reason code `conflicting_position`.
+34. Verify no simulated position is already open; if one is, skip and log
+    `conflicting_position`.
 
-43. If both checks pass, the system submits a bracketed order to the Tradovate API
-    containing the entry, the stop, and the target, and logs the submission with
-    every computed input value.
+35. If both checks pass, open the simulated position at the touch price plus one tick
+    of adverse slippage, and deduct commission.
 
-44. After the fill, the system polls live price against the stop and the target
-    continuously.
+36. Step forward bar by bar, checking the bar's high and low against the stop and
+    target.
 
-45. If the target is reached first, the system closes the position and logs the
-    outcome as a win, recording the realized R-multiple.
-
-46. If the stop is reached first, the system closes the position and logs the
-    outcome as a loss, recording the realized R-multiple.
-
-47. If neither is reached within 30 minutes after session close, the system closes
-    the position at market and logs the outcome as a scratch, recording the realized
+37. If the target is reached first, close the position and log a win with its realized
     R-multiple.
 
-48. Independently of the trading cycle, on every processing cycle the system verifies
-    that the price feed is delivering current data and that the broker connection is
-    responding without error.
+38. If the stop is reached first, close the position and log a loss with its realized
+    R-multiple.
 
-49. If either verification fails, the system immediately closes any open position at
-    market, blocks all new entries, and logs the reason code `connectivity_halt`.
+39. If a single bar's range spans both the stop and the target, resolve it as a loss.
+    This is the conservative assumption: intrabar sequence is unknowable from OHLC
+    data, and assuming the favorable order would inflate results.
 
-50. The system keeps new entries blocked until both verifications pass again, then
-    resumes normal operation and logs the recovery.
+40. If neither is reached within 30 minutes after session close, close at market and
+    log a scratch with its realized R-multiple.
 
-51. Every decision point — every submitted trade and every skip — writes one log
-    record containing timestamp, symbol, arm, day mode, regime, bias, level grade,
-    confluence score with its four component results, decision, reason code, and
-    where applicable the entry, stop, target, size, and realized R-multiple.
+41. Write one log record at every decision point containing timestamp, session date,
+    arm, mode, regime, bias, level grade, confluence score with its four components,
+    decision, reason code, and where applicable entry, stop, target, size, and
+    realized R-multiple.
 
-### Data collection and analysis (performed by a human, after each arm completes)
+### Part C — Analysis (performed by a human, after each arm completes)
 
-52. At the end of the arm's 60 trading days, stop the service and export the decision
-    log to CSV with `stdvbot export-log --out arm_<name>.csv`.
+42. Export the arm's decision log with `stdvbot export-log --out arm_<name>.csv`.
 
-53. Verify data integrity by confirming that the number of logged submissions matches
-    the number of fills reported in the Tradovate account statement for the same
-    period. Investigate and document any discrepancy before analysis.
+43. Verify integrity by confirming that logged entries and logged exits are equal in
+    number and that no position remains open at the end of the dataset.
 
-54. For each arm, compute mean per-trade R-multiple, standard deviation, win rate,
+44. Compute for each arm: mean per-trade R-multiple, standard deviation, win rate,
     profit factor, maximum drawdown, and total trade count.
 
-55. Test the mean per-trade R of each arm against zero using a one-sample t-test at
-    α = 0.05.
+45. Test each arm's mean per-trade R against zero with a one-sample t-test at α = 0.05.
 
-56. Compare the regime-gated arm against the random-direction control arm using
-    Welch's unequal-variance t-test on per-trade R at α = 0.05, and compare win
-    rates using a two-proportion z-test.
+46. Compare the regime-gated arm against the random-direction control with Welch's
+    unequal-variance t-test on per-trade R at α = 0.05, and compare win rates with a
+    two-proportion z-test.
 
-57. Compute a 95% confidence interval for each arm's mean per-trade R by
-    bootstrap resampling with 10,000 resamples.
+47. Compute a 95% confidence interval for each arm's mean per-trade R by bootstrap
+    resampling with 10,000 resamples.
 
-58. Tabulate the frequency of each skip reason code per arm to determine which
-    filters removed the most candidate trades, and report the counts alongside the
-    performance results.
+48. Tabulate the frequency of each skip reason code per arm to determine which filters
+    removed the most candidate trades, and report those counts alongside performance.
 
-59. Repeat steps 13 through 58 for each of the three arms so that all three are run
-    over comparable market conditions, and note in the lab notebook any market event
-    that affected one arm's period and not another's.
+49. Repeat steps 8 through 48 for each of the three arms. Because all arms replay the
+    same historical period, no adjustment for differing market conditions is required.
 
-60. Only after all three arms are complete and analyzed, adjust the confluence
-    threshold, stop tier, risk percentage, or stagnant cutoff if a follow-up study is
-    planned. Changing any of these values mid-arm invalidates that arm and requires
-    restarting it.
+50. Only after all three arms are analyzed, vary the confluence threshold, stop tier,
+    risk percentage, or stagnant cutoff for a sensitivity analysis. Report any such
+    variation as a separate secondary result, never as a revision of the primary
+    result, since tuning parameters against the same data that produced the primary
+    finding would overfit it.
