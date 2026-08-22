@@ -3,11 +3,15 @@
 This document consolidates the trading methodology as explained so far, so it
 doesn't live only in chat scrollback. It is **not fully implemented yet** —
 sections marked `TODO` are genuinely open; sections marked `ASSUMED DEFAULT`
-are deliberate choices made to keep a fully-autonomous design moving (per
-the trader's direction: full automation, no human input at trade time, WIP
-so assumptions are fine for now) and can be corrected later without
-architectural rework. Code in `stdvbot/legs.py` and `stdvbot/poi.py`
-implements the parts that are well-defined.
+are deliberate choices made to keep the design moving without blocking on
+every open question, and can be corrected later without architectural
+rework. Code in `stdvbot/legs.py` and `stdvbot/poi.py` implements the parts
+that are well-defined.
+
+**Automation level — superseded, see §5**: earlier phases of this project
+targeted full automation with no human input at trade time. That's been
+replaced with a **semi-automatic** design (bot proposes, human confirms
+entry/exit) — see §5 for why and what it changes.
 
 ## 1. Core idea
 
@@ -117,28 +121,61 @@ checkpoints) — currently linear interpolation via `zone_grade()`.
   eligible; the 2.0-2.5 zone is skipped entirely for the whole day,
   regardless of confluence score.
 
-## 5. Autonomous operation (confirmed target: full automation, no human input at trade time)
+## 5. Autonomous operation — **UPDATED: semi-automatic, not fully unattended**
 
-`ASSUMED DEFAULT`s locked in to make this operable end-to-end without a
-human decision point (see chat log for full reasoning — summarized here):
+**Superseded decision**: this section originally targeted full automation
+with no human input at trade time (the trader's initial WIP direction, to
+keep design moving without blocking on every open question). Two things
+changed that:
+
+1. Researching live-execution options surfaced that MyFundedFutures
+   updated its policy on **2025-07-23** to explicitly permit algorithmic
+   trading / third-party automation on both evaluation and live funded
+   accounts — but per third-party summaries of that policy (MFF's own
+   domains are unreachable from this environment — **re-verify directly
+   against MFF's rules/support before relying on this**), traders must
+   *actively supervise* entries/exits rather than run fully unattended.
+2. Given that, the trader chose **semi-automatic** operation going
+   forward: the bot detects setups and stages the trade (direction, entry
+   level, stop, target) but a human confirms before it's actually placed
+   — not the fully autonomous design originally assumed.
+
+This changes the target design for `stdvbot/live.py` (still not built):
+it becomes a *setup-staging + confirmation* flow, not a
+detect-and-place-automatically flow. Everything below this line describes
+what's still assumed for the parts semi-auto doesn't change (sizing,
+stops, targets, fail-safes) — the delta is *who* pulls the trigger on
+entry/exit, not how the setup is computed.
+
+`ASSUMED DEFAULT`s (see chat log for full reasoning — summarized here):
 
 - **Position sizing**: risk 1% of account equity per trade; contract count
   derived from `risk_amount / stop_distance` using instrument tick specs.
+  (Flagged elsewhere as likely too aggressive against the $2,000 MLL —
+  revisit before going live; the risk-sweep example already compares
+  0.25%/0.5%/1%.)
 - **Instrument**: MNQ (Micro E-mini Nasdaq-100) — `MNQ_TICK_SIZE = 0.25`,
   `MNQ_TICK_VALUE = 0.50` (i.e. $2.00/point). Encoded in `stdvbot/legs.py`.
 - **Max concurrent positions**: 1.
 - **Daily loss circuit breaker**: halt new entries for the rest of the day
-  once daily loss exceeds 3% of account equity.
+  once daily loss exceeds 3% of account equity. Still auto-enforced even
+  in semi-auto mode — it stops *proposing* new setups, it doesn't need a
+  human to approve a halt.
 - **Stop**: beyond the next fib tier out from the entry level.
 - **Target**: session VWAP; if VWAP has already been passed by entry time,
   switch to the nearest opposing POI.
-- **Stagnation handling** (the "closes flat" 4.5 outcome): auto-close at
-  market 30 minutes past session close if neither stop nor target has hit.
+- **Stagnation handling** (the "closes flat" 4.5 outcome): stage an
+  auto-close proposal at market 30 minutes past session close if neither
+  stop nor target has hit — still needs confirmation like any other exit
+  in semi-auto mode, but is time-sensitive enough to page/alert loudly
+  rather than wait passively.
 - **Fail-safe**: on data feed or broker connectivity loss, auto-flatten any
-  open position and halt new entries until connectivity is confirmed
-  restored.
-- **Logging**: every decision — trades taken *and* setups auto-skipped, with
-  reason — gets logged, since no human is approving trades in real time.
+  open position and halt new setup proposals until connectivity is
+  confirmed restored. This one stays fully automatic even in semi-auto
+  mode — a human isn't in a position to confirm anything during a
+  connectivity loss, and flattening is the safe default.
+- **Logging**: every decision — setups proposed, confirmed, skipped by the
+  human, or auto-skipped by a filter, with reason — gets logged.
 
 ## 6. Explicitly deferred
 
@@ -154,6 +191,24 @@ human decision point (see chat log for full reasoning — summarized here):
   wiring up their REST/WebSocket API for both market data and order
   placement. This blocks real live operation but not further code
   scaffolding.
+- **Considered and rejected: ProjectX Gateway API.** Real, documented API
+  (`gateway.docs.projectx.com`) offering L1/L2 data and order execution
+  over a REST + SignalR (WebSocket) interface — but its official SDK
+  states it works "exclusively with TopStepX ProjectX Gateway API," and
+  MyFundedFutures' listed approved platforms (Tradovate, NinjaTrader,
+  Rithmic R|Trader Pro, Sierra Chart, Quantower, ATAS, Jigsaw Trading) do
+  not include it. Hooking this up would connect to a TopStep account's
+  data/orders, not the MFF account this project is built against. Not
+  ruled out permanently — if the trader opens a TopStep account
+  separately, this becomes relevant again — but Tradovate stays the
+  integration target for the current MFF account.
+- **MFF algo-trading policy**: per third-party summaries (MFF's own
+  domains aren't reachable from this environment to confirm firsthand),
+  MFF updated its rules on 2025-07-23 to permit algorithmic
+  trading/automation on both evaluation and live funded accounts, subject
+  to active supervision of entries/exits — this is what drove the
+  semi-automatic design in §5. **Re-verify this directly with MFF support
+  or their help center before relying on it operationally.**
 
 ## 8. What's implemented so far
 
