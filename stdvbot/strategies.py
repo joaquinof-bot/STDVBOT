@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 
 from . import candles as c
+from . import manipulation_leg_strategy as mls
 
 
 def _rsi(close: pd.Series, window: int = 14) -> pd.Series:
@@ -143,6 +144,35 @@ class CompositeScoreStrategy(Strategy):
         return _entries_to_positions(long_entry, short_entry, max_hold=self.max_hold)
 
 
+@dataclass
+class ManipulationLegStrategy(Strategy):
+    """Wraps :func:`stdvbot.manipulation_leg_strategy.generate_signals` to
+    fit the same ``Strategy`` interface as the candlestick strategies.
+    Requires intraday data with real killzone-aligned timestamps (1m or
+    finer) — see :mod:`stdvbot.manipulation_leg_strategy`'s module
+    docstring (including a correction to the spec doc's trade-direction
+    description) and ``docs/manipulation_leg_strategy.md`` for what's
+    confirmed vs. assumed here.
+    """
+
+    name: str = "manipulation_leg"
+    daily_bias_lookback: int = 20
+    regime_window: int = 20
+    regime_trending_threshold: float = 0.3
+    touch_scan_bars: int = 60
+    max_hold_bars: int = 120
+
+    def generate_signals(self, df: pd.DataFrame) -> pd.Series:
+        return mls.generate_signals(
+            df,
+            daily_bias_lookback=self.daily_bias_lookback,
+            regime_window=self.regime_window,
+            regime_trending_threshold=self.regime_trending_threshold,
+            touch_scan_bars=self.touch_scan_bars,
+            max_hold_bars=self.max_hold_bars,
+        )
+
+
 def _entries_to_positions(
     long_entry: pd.Series, short_entry: pd.Series, max_hold: int = 0
 ) -> pd.Series:
@@ -190,6 +220,7 @@ STRATEGY_REGISTRY = {
     "reversal": ReversalStrategy,
     "continuation": ContinuationStrategy,
     "composite": CompositeScoreStrategy,
+    "manipulation_leg": ManipulationLegStrategy,
 }
 
 

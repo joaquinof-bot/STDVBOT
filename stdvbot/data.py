@@ -79,3 +79,53 @@ def generate_synthetic_ohlcv(
     )
     df.index.name = "date"
     return df
+
+
+def generate_synthetic_intraday_ohlcv(
+    n_days: int = 10,
+    start: str = "2022-01-03",
+    bars_per_day: int = 1440,
+    start_price: float = 15_000.0,
+    minute_vol: float = 0.0006,
+    drift_per_day: float = 0.0002,
+    seed: int | None = 42,
+) -> pd.DataFrame:
+    """Generate synthetic 1-minute OHLCV bars spanning ``n_days`` calendar
+    days, continuous (no weekend/session gaps -- a simplification, this is
+    for exercising intraday-aware code like
+    :mod:`stdvbot.manipulation_leg_strategy`, not a realistic market
+    simulator). Same random-walk-plus-wick-noise approach as
+    :func:`generate_synthetic_ohlcv`, just at minute granularity so every
+    calendar day includes both the Asia (20:00) and NY (09:30) killzone
+    windows.
+    """
+    rng = np.random.default_rng(seed)
+    n = n_days * bars_per_day
+    idx = pd.date_range(start=start, periods=n, freq="1min")
+
+    per_bar_drift = drift_per_day / bars_per_day
+    log_returns = rng.normal(loc=per_bar_drift, scale=minute_vol, size=n)
+    close = start_price * np.exp(np.cumsum(log_returns))
+
+    open_ = np.empty(n)
+    open_[0] = start_price
+    open_[1:] = close[:-1]
+
+    body_hi = np.maximum(open_, close)
+    body_lo = np.minimum(open_, close)
+    body_size = np.maximum(body_hi - body_lo, 1e-6)
+
+    upper_extra = np.abs(rng.normal(0.0, 0.6, size=n)) * body_size * rng.uniform(0.2, 2.5, size=n)
+    lower_extra = np.abs(rng.normal(0.0, 0.6, size=n)) * body_size * rng.uniform(0.2, 2.5, size=n)
+
+    high = np.maximum(body_hi + upper_extra, body_hi)
+    low = np.minimum(body_lo - lower_extra, body_lo)
+
+    volume = rng.integers(50, 500, size=n).astype(float)
+
+    df = pd.DataFrame(
+        {"open": open_, "high": high, "low": low, "close": close, "volume": volume},
+        index=idx,
+    )
+    df.index.name = "date"
+    return df

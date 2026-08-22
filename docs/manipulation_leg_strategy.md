@@ -45,7 +45,11 @@ scale, not separate mechanisms:
 4. **Leg validity — confirmed**: a leg must span **3 to 5 continuous
    candles** (`MIN_LEG_CANDLES`/`MAX_LEG_CANDLES` in `stdvbot/legs.py`), 3
    being typical. Fewer (typically a single fast candle) is a suspect
-   "false" leg; more than 5 is no longer treated as one leg.
+   "false" leg; more than 5 is no longer treated as one leg. **This range
+   is specific to 1-minute killzone legs** — `stdvbot/manipulation_leg_strategy.py`'s
+   daily-bias read (§1) deliberately does *not* apply it (a "fast pump"
+   peaking within the first 3-5 *days* of a lookback window is far too
+   strict and left bias undefined almost everywhere in testing).
 
 ## 3. Inverse Fibonacci projection & entries
 
@@ -67,10 +71,18 @@ Given a validated leg with an **origin** (start price) and **extreme**
   and has not been explicitly contradicted since — treated as confirmed
   pending any correction.
 
-- **Trade direction**: entering **opposite the manipulation leg's own
-  push** — i.e., toward whatever the leg's origin implies was the "true"
-  direction. Mirror case (downward leg) enters short once price rallies up
-  to strike the equivalent level above.
+- **Trade direction — CORRECTED**: entering in the **same direction as the
+  leg's own push** (an up leg leads to a long entry, a down leg to a
+  short), confirmed directly from the worked example verbatim ("manipulates
+  higher... mark a lower fib... once it strikes 2.5 you enter a long" — an
+  *up* leg leading to a *long* entry). An earlier version of this doc said
+  "opposite the leg," which was wrong — that language describes the
+  intermediate retrace move that carries price down to the fib zone, not
+  the trade actually taken. Caught while wiring `stdvbot/manipulation_leg_strategy.py`
+  — flagging loudly since getting this backwards means systematically
+  wrong-way trades. The higher-timeframe bias (§2.3) is only an off-trend
+  *filter* for which legs qualify as manipulation; it does not itself set
+  the trade direction — the leg does.
 
 ### Confidence gradient (not a single trigger)
 
@@ -151,11 +163,31 @@ human decision point (see chat log for full reasoning — summarized here):
 - `stdvbot/poi.py` — session and daily high/low tracking, and a generic
   sweep-detector (wick through a level, close back on the other side) used
   for POIs at any scale.
+- `stdvbot/manipulation_leg_strategy.py` — **the strategy is wired
+  end-to-end** and runs through the real backtester
+  (`stdvbot.backtest.run_backtest`), registered as `"manipulation_leg"` in
+  `stdvbot/strategies.py`. Per killzone: reads daily bias and regime from
+  data before that day, detects a leg, keeps it only if valid and
+  off-trend vs. bias, projects inverse-Fib levels, gates them by regime,
+  watches for a touch (confluence-gated below 4.5, currently just a
+  matching-direction candlestick pattern — VWAP/round-number/POI
+  confluence checks from §3's `ASSUMED DEFAULT` aren't wired in yet), and
+  manages the resulting trade to stop/target/timeout. See the module's
+  docstring for the trade-direction correction (§3) and other
+  simplifications made while wiring it up. Demonstrated against synthetic
+  1-minute data (and pluggable to real 1-minute CSV data) in
+  `examples/run_manipulation_leg_backtest.py`.
+- `stdvbot/data.py` gained `generate_synthetic_intraday_ohlcv()` — 1-minute
+  synthetic OHLCV so this strategy (which needs intraday, killzone-aligned
+  timestamps, unlike the daily-bar candlestick strategies) has something
+  to run against offline.
 
-**Not yet built**: the autonomous decision/execution pipeline described in
-§5 (confluence scoring, regime gating, risk/position sizing, order
-placement, trade management, safety loop) — i.e. `stdvbot/live.py` and
-`stdvbot/execution.py` don't exist yet. Also not built: applying
-`detect_leg`/`inverse_fib_levels` to resampled 4H/Daily bars for the
-higher-timeframe bias read described in §1 (the primitives support it, but
-nothing calls them that way yet).
+**Not yet built**: the autonomous *live/unattended* execution pipeline
+described in §5 (position sizing from account equity, the daily-loss
+circuit breaker, order placement against a real broker, the connectivity
+fail-safe, decision logging) — `stdvbot/live.py` and
+`stdvbot/execution.py` don't exist yet. What exists today is a
+**backtestable strategy**, not a live-trading bot — those are different
+projects sharing the same signal logic. Also not wired in: POIs (§4) as
+targets/confluence, and the full 4-factor confluence score (currently
+just the candlestick-pattern check).

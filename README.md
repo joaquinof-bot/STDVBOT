@@ -19,29 +19,34 @@ stdvbot/
   strategies.py  turns patterns into a target position (-1/0/1) per bar
   backtest.py    leak-free vectorized backtester (signal@close -> fill@next open)
   metrics.py     Sharpe, Sortino, max drawdown, Calmar, win rate, profit factor
-  data.py        CSV loader + offline synthetic OHLCV generator
+  data.py        CSV loader + offline synthetic OHLCV (daily and 1-minute) generators
   cli.py         `python -m stdvbot.cli ...`
-  legs.py        manipulation-leg detection + inverse-Fibonacci levels (WIP, see docs/)
-  poi.py         session/daily high-low POI tracking + liquidity-sweep detection (WIP)
+  legs.py        manipulation-leg detection + inverse-Fibonacci levels
+  poi.py         session/daily high-low POI tracking + liquidity-sweep detection
+  manipulation_leg_strategy.py   the manipulation-leg strategy wired to run_backtest()
   propfirm.py    prop-firm evaluation compliance checking + walk-forward pass-rate estimate
 examples/
-  run_backtest.py          compares all bundled strategies side by side
-  run_propfirm_backtest.py estimates a MyFundedFutures Pro 50K pass rate for a strategy
+  run_backtest.py                compares all bundled candlestick strategies side by side
+  run_manipulation_leg_backtest.py  runs the manipulation-leg strategy through the real backtester
+  run_propfirm_backtest.py       estimates a MyFundedFutures Pro 50K pass rate for a strategy
 tests/                  pytest suite (pattern shapes, backtest math, strategies)
 docs/
   manipulation_leg_strategy.md   spec for the manipulation-leg/liquidity-sweep
-                                  strategy legs.py and poi.py implement — still WIP,
-                                  see its TODOs before treating it as tradeable
+                                  strategy — read this for what's confirmed vs.
+                                  ASSUMED DEFAULT before treating it as tradeable
   propfirm_myfundedfutures_pro_50k.md   MyFundedFutures Pro 50K rules propfirm.py
                                          is built against
 ```
 
-> **Work in progress:** `legs.py` and `poi.py` implement the well-defined
-> primitives of a manipulation-leg / liquidity-sweep strategy (see
-> `docs/manipulation_leg_strategy.md`), but do **not** yet wire into
-> `strategies.py`/`backtest.py` — several rules (confluence, regime
-> gating, stop/target placement) are still open questions documented in
-> that spec's TODOs.
+> **Manipulation-leg strategy status:** wired end-to-end and runs through
+> the real backtester (`--strategy manipulation_leg`, needs 1-minute or
+> finer data — daily bars won't work). Several of its rules are
+> `ASSUMED DEFAULT`s rather than fully confirmed (confluence scoring,
+> regime formula, target selection) — read
+> `docs/manipulation_leg_strategy.md` and
+> `stdvbot/manipulation_leg_strategy.py`'s module docstring before
+> treating results as meaningful. It is a **backtestable strategy**, not
+> a live-trading bot — no broker/execution wiring exists.
 
 ## Install
 
@@ -100,8 +105,19 @@ runs the whole set at once and adds a signed `pattern_score` column
 | `continuation` | Trade three white soldiers / three black crows *with* the prevailing trend.             |
 | `composite`    | Rolling sum of every pattern's signed score; enters when the sum crosses a threshold.   |
 
-All three share the same exit logic: hold until an opposite signal
-fires or `max_hold` bars elapse.
+The three candlestick strategies above share the same exit logic: hold
+until an opposite signal fires or `max_hold` bars elapse. They run on
+daily (or any) bar data.
+
+A fourth strategy, **`manipulation_leg`**, implements the
+manipulation-leg/liquidity-sweep methodology in
+`docs/manipulation_leg_strategy.md` — session-open fakeout legs, an
+inverse-Fibonacci reversal zone, HTF-bias and regime gating, and its own
+stop/target/timeout exit logic. Unlike the three above, **it needs
+1-minute (or finer) OHLCV data with real killzone-aligned timestamps** —
+use `stdvbot.data.generate_synthetic_intraday_ohlcv()` or your own
+intraday CSV, not the daily synthetic generator. See
+`examples/run_manipulation_leg_backtest.py`.
 
 ## Backtester design (read this before trusting a number)
 
