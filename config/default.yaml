@@ -1,0 +1,31 @@
+# Default STDVBOT strategy configuration.
+# Any key not listed here falls back to the StrategyConfig dataclass default.
+
+timeframe_stack: ["1d", "4h", "1h", "30m", "15m", "5m", "1m"]
+entry_timeframe: "5m"
+
+vwap_anchor: "D"
+vwap_bands: [1.0, 2.0, 3.0]
+vwap_swing_band: 2.0
+
+rsi_length: 14
+rsi_overbought: 70.0
+rsi_oversold: 30.0
+rsi_neutral: 50.0
+
+trendline_pivot_window: 3
+trendline_use_last_n: 2
+trendline_tolerance_atr_mult: 0.25
+trendline_timeframes: ["1h", "5m"]
+
+killzones:
+  asian: [0, 0, 3, 0]
+  london_open: [7, 0, 10, 0]
+  ny_am: [12, 0, 15, 0]
+  ny_pm_london_close: [15, 0, 17, 0]
+
+risk_per_trade_pct: 0.5
+atr_length: 14
+stop_atr_mult: 1.5
+target_r_multiple: 2.0
+max_bars_in_trade: 400
