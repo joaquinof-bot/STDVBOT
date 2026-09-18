@@ -31,6 +31,119 @@ def load_ohlcv_csv(path: str, date_col: str = "date") -> pd.DataFrame:
     return df
 
 
+def load_databento_parent_ohlcv_csv(
+    path: str,
+    utc_offset_hours: float = -4.0,
+) -> pd.DataFrame:
+    """Load a Databento ``ohlcv-*`` CSV requested with ``stype_in="parent"``
+    (e.g. symbol ``"MNQ.FUT"`` or ``"NQ.FUT"``) and collapse it into a single
+    continuous front-month OHLCV series.
+
+    A parent-symbology pull returns every related instrument at once: each
+    individual expiry (``MNQU6``, ``MNQZ6``, ...) *and* calendar spread
+    contracts (``MNQU6-MNQZ6``, ...), all interleaved by timestamp with a
+    ``symbol`` column identifying which is which. This is not directly
+    usable as a price series -- spread rows have a completely different
+    price scale (a price difference, not a price level), and the outright
+    contracts need to be stitched into one continuous series as the front
+    month rolls. This function does both:
+
+    1. Drops every spread contract (``symbol`` containing ``"-"``).
+    2. For each UTC calendar day, picks whichever remaining single-expiry
+       contract traded the most volume that day, and keeps only that
+       contract's bars for the day (a volume-based roll, the same idea as
+       Databento's own ``.v.0`` continuous symbology, computed locally so
+       this works on data already pulled with ``stype_in="parent"``
+       instead of requiring a fresh ``stype_in="continuous"`` pull).
+    3. **Back-adjusts for the roll.** Two quarterly contracts trade a real,
+       persistent price difference against each other (carry/basis) --
+       around 290-300 points was observed between NQU6/NQZ6 in testing,
+       not noise. Switching feeds day-to-day at step 2 alone would stitch
+       in a fake cliff of that size exactly on the roll day, which the leg
+       detector (which reacts to raw point moves over 3-5 candles) would
+       likely misread as a manipulation leg. To prevent that, at each roll
+       this measures the two contracts' actual concurrent price gap
+       (median close-price difference over overlapping minutes on the
+       roll day) and shifts every earlier bar by that amount, cumulatively
+       across multiple rolls -- the standard "back-adjusted continuous
+       contract" (Panama) method. The most recent contract's prices are
+       left untouched; history behind each roll is what moves. This means
+       older absolute price levels in the output won't match what actually
+       printed on that historical date -- only the *shape*/point-deltas
+       are preserved, which is what the strategy actually consumes.
+
+    Requesting with ``stype_in="continuous"`` and a symbol like
+    ``"MNQ.c.0"`` directly from Databento avoids needing this function at
+    all -- prefer that when practical. This exists for parent-symbology
+    pulls already on hand.
+
+    ``utc_offset_hours``: Databento's ``ts_event`` is UTC; the killzone
+    times in :data:`stdvbot.legs.DEFAULT_KILLZONES` (09:30 / 20:00) are a
+    naive, non-timezone-aware ``ASSUMED DEFAULT`` of UTC-4 (not DST-aware
+    US/Eastern) -- see ``docs/manipulation_leg_strategy.md``. This shifts
+    timestamps by that fixed offset so the resulting index's wall-clock
+    time lines up with what the killzone detection expects. Pass 0 to keep
+    raw UTC.
+
+    Note: this loads **full-size NQ** price levels as-is if that's what was
+    requested (NQ and MNQ quote the identical index price, just at 10x
+    different dollar-per-point -- CME designed MNQ specifically to track
+    NQ 1:1 in price). The strategy's dollar risk/PnL math should still use
+    MNQ's own contract specs (``MNQ_TICK_SIZE``/``MNQ_TICK_VALUE`` in
+    ``stdvbot/legs.py``), not NQ's -- this function only fixes up the price
+    *series*, it doesn't rescale anything.
+    """
+    df = pd.read_csv(path)
+    df.columns = [c.strip().lower() for c in df.columns]
+
+    required = {"ts_event", "open", "high", "low", "close", "volume", "symbol"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"Databento CSV is missing required column(s): {sorted(missing)}")
+
+    df["ts_event"] = pd.to_datetime(df["ts_event"], utc=True)
+    df = df[~df["symbol"].str.contains("-", regex=False)].copy()
+    if df.empty:
+        raise ValueError("No outright (non-spread) contracts found in this file")
+
+    df["_day"] = df["ts_event"].dt.date
+    daily_volume = df.groupby(["_day", "symbol"])["volume"].sum()
+    front_month_by_day = daily_volume.groupby("_day").idxmax().apply(lambda t: t[1])
+
+    days_sorted = sorted(front_month_by_day.index)
+    rolls = []  # (roll_day, old_symbol, new_symbol)
+    prev_symbol = front_month_by_day[days_sorted[0]]
+    for d in days_sorted[1:]:
+        sym = front_month_by_day[d]
+        if sym != prev_symbol:
+            rolls.append((d, prev_symbol, sym))
+        prev_symbol = sym
+
+    keep_symbol = df["_day"].map(front_month_by_day)
+    kept = df[df["symbol"] == keep_symbol].copy()
+
+    adjustment = pd.Series(0.0, index=kept.index)
+    for roll_day, old_symbol, new_symbol in rolls:
+        overlap = df[(df["_day"] == roll_day) & (df["symbol"].isin([old_symbol, new_symbol]))]
+        pivot = overlap.pivot_table(index="ts_event", columns="symbol", values="close")
+        pivot = pivot.dropna(subset=[old_symbol, new_symbol]) if set([old_symbol, new_symbol]).issubset(pivot.columns) else pivot.iloc[0:0]
+        if pivot.empty:
+            continue  # no concurrent quotes to measure the basis from -- leave unadjusted
+        basis = (pivot[new_symbol] - pivot[old_symbol]).median()
+        roll_time = pivot.index.min()
+        adjustment.loc[kept["ts_event"] < roll_time] += basis
+
+    kept[["open", "high", "low", "close"]] = kept[["open", "high", "low", "close"]].add(adjustment, axis=0)
+
+    kept["ts_event"] = kept["ts_event"] + pd.Timedelta(hours=utc_offset_hours)
+    kept["ts_event"] = kept["ts_event"].dt.tz_localize(None)
+
+    kept = kept.set_index("ts_event").sort_index()
+    kept = kept[["open", "high", "low", "close", "volume"]]
+    kept.index.name = "date"
+    return kept
+
+
 def generate_synthetic_ohlcv(
     n: int = 500,
     start: str = "2022-01-03",
