@@ -16,6 +16,7 @@ import pandas as pd
 
 from . import candles as c
 from . import manipulation_leg_strategy as mls
+from . import manipulation_leg_strategy_v2 as mls_v2
 
 
 def _rsi(close: pd.Series, window: int = 14) -> pd.Series:
@@ -177,6 +178,41 @@ class ManipulationLegStrategy(Strategy):
         )
 
 
+@dataclass
+class ManipulationLegStrategyV2(Strategy):
+    """Same as :class:`ManipulationLegStrategy`, wrapping
+    :func:`stdvbot.manipulation_leg_strategy_v2.generate_signals` instead
+    of v1. The only behavioral difference: on a day with no defined daily
+    bias, v1 skips the whole day; v2 allows the setup through restricted
+    to the A+ level only, since the off-trend filter can't be evaluated
+    without a bias to compare against. See
+    ``stdvbot/manipulation_leg_strategy_v2.py``'s module docstring for the
+    full reasoning. v1 (``manipulation_leg``) is untouched by this class
+    existing -- this is a fork, not a replacement.
+    """
+
+    name: str = "manipulation_leg_v2"
+    daily_bias_lookback: int = 20
+    regime_window: int = 20
+    regime_trending_threshold: float = 0.3
+    touch_scan_bars: int = 60
+    max_hold_bars: int = 120
+    pivotal_leg_size_multiple: float = 3.0
+    pivotal_leg_reference_window: int = 1440
+
+    def generate_signals(self, df: pd.DataFrame) -> pd.Series:
+        return mls_v2.generate_signals(
+            df,
+            daily_bias_lookback=self.daily_bias_lookback,
+            regime_window=self.regime_window,
+            regime_trending_threshold=self.regime_trending_threshold,
+            touch_scan_bars=self.touch_scan_bars,
+            max_hold_bars=self.max_hold_bars,
+            pivotal_leg_size_multiple=self.pivotal_leg_size_multiple,
+            pivotal_leg_reference_window=self.pivotal_leg_reference_window,
+        )
+
+
 def _entries_to_positions(
     long_entry: pd.Series, short_entry: pd.Series, max_hold: int = 0
 ) -> pd.Series:
@@ -225,6 +261,7 @@ STRATEGY_REGISTRY = {
     "continuation": ContinuationStrategy,
     "composite": CompositeScoreStrategy,
     "manipulation_leg": ManipulationLegStrategy,
+    "manipulation_leg_v2": ManipulationLegStrategyV2,
 }
 
 

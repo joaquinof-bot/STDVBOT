@@ -119,6 +119,14 @@ use `stdvbot.data.generate_synthetic_intraday_ohlcv()` or your own
 intraday CSV, not the daily synthetic generator. See
 `examples/run_manipulation_leg_backtest.py`.
 
+**`manipulation_leg_v2`** is a fork of the above, not a replacement —
+`manipulation_leg` is unchanged and both remain independently selectable.
+v2's only behavioral difference: on a day with no defined daily bias
+(pure lookback warmup, not an ongoing case), v1 skips the whole day; v2
+allows the setup through restricted to the A+ level only. See
+`docs/manipulation_leg_strategy.md` §9 for the full reasoning and a bug
+caught while building it.
+
 ## Backtester design (read this before trusting a number)
 
 - **No look-ahead:** a strategy's signal for bar *i* is decided from

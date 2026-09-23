@@ -259,3 +259,31 @@ fail-safe, decision logging) — `stdvbot/live.py` and
 projects sharing the same signal logic. Also not wired in: POIs (§4) as
 targets/confluence, and the full 4-factor confluence score (currently
 just the candlestick-pattern check).
+
+## 9. v2 fork: bias-undefined fallback
+
+`stdvbot/manipulation_leg_strategy_v2.py` is a deliberate **fork**, not an
+edit — `manipulation_leg` (v1, everything above) is untouched and stays
+available under that name in `STRATEGY_REGISTRY`; `manipulation_leg_v2`
+is a separate, independently selectable strategy.
+
+The only behavioral difference: v1 skips a killzone entirely on any day
+with no defined daily bias (in practice, exactly the first
+`daily_bias_lookback` days of whatever dataset is loaded — pure warmup,
+verified against a real 3-month NQ pull: days 0-19 of 80, nothing else).
+v2 allows the setup through on those days too, but restricted to the A+
+(4.5) level only, since the off-trend filter can't be evaluated without a
+bias to compare against — substituting a higher size/confidence bar for
+the missing directional check rather than skipping outright or applying
+no substitute filter at all. See the module's docstring for a bug caught
+while building this (an `is None` check that should have been
+`pd.isna()`, since undefined bias is stored as `float('nan')`).
+
+On the real 3-month NQ pull this fork was tested against, v1 and v2
+produced **identical** results (same 8 trades) — the specific
+bias-undefined setup that motivated this fork never actually reaches the
+A+ level within the standard touch window, so the fallback is correct
+but didn't change this particular sample's outcome. Confirmed correct via
+6 dedicated unit tests (`tests/test_manipulation_leg_strategy_v2.py`)
+using constructed data where the differential behavior is guaranteed to
+trigger, rather than relying on real data producing the right conditions.
