@@ -161,6 +161,8 @@ class ManipulationLegStrategy(Strategy):
     regime_trending_threshold: float = 0.3
     touch_scan_bars: int = 60
     max_hold_bars: int = 120
+    pivotal_leg_size_multiple: float = 3.0
+    pivotal_leg_reference_window: int = 1440
 
     def generate_signals(self, df: pd.DataFrame) -> pd.Series:
         return mls.generate_signals(
@@ -170,6 +172,8 @@ class ManipulationLegStrategy(Strategy):
             regime_trending_threshold=self.regime_trending_threshold,
             touch_scan_bars=self.touch_scan_bars,
             max_hold_bars=self.max_hold_bars,
+            pivotal_leg_size_multiple=self.pivotal_leg_size_multiple,
+            pivotal_leg_reference_window=self.pivotal_leg_reference_window,
         )
 
 

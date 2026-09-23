@@ -46,16 +46,31 @@ import pandas as pd
 
 from . import candles as c
 from .legs import (
+    BIG_LEG_SIZE_MULTIPLE,
     DEFAULT_KILLZONES,
     DEFAULT_LEVEL_MULTIPLES,
     detect_leg,
     inverse_fib_levels,
+    is_pivotal_leg,
 )
 
 #: A touch at/above this multiple needs no confluence confirmation (the
 #: spec's "A+ / zone of no return"); anything shallower needs a
 #: confirming candlestick pattern in the trade's direction.
 A_PLUS_MULTIPLE = 4.5
+
+
+def typical_bar_range(df: pd.DataFrame, window: int = 1440) -> pd.Series:
+    """Trailing median 1-minute bar range (``high - low``), used as the
+    "normal movement" yardstick for :func:`stdvbot.legs.is_pivotal_leg` --
+    a short leg only counts as pivotal if it's big *relative to* how much
+    a single bar normally moves. Shifted by one bar so a killzone firing
+    at bar ``j`` only sees bars strictly before it (no look-ahead).
+    ``window`` defaults to 1440 bars (one day at 1-minute resolution).
+    """
+    bar_range = df["high"] - df["low"]
+    min_periods = min(window, max(10, window // 20))
+    return bar_range.rolling(window, min_periods=min_periods).median().shift(1)
 
 
 def resample_ohlc(df: pd.DataFrame, rule: str) -> pd.DataFrame:
@@ -137,6 +152,8 @@ def generate_signals(
     regime_trending_threshold: float = 0.3,
     touch_scan_bars: int = 60,
     max_hold_bars: int = 120,
+    pivotal_leg_size_multiple: float = BIG_LEG_SIZE_MULTIPLE,
+    pivotal_leg_reference_window: int = 1440,
 ) -> pd.Series:
     """Generate a target position series (-1/0/1) for the manipulation-leg
     strategy on 1-minute (or finer) OHLCV data ``df``, compatible with
@@ -144,7 +161,10 @@ def generate_signals(
 
     Pipeline, per calendar day: read the daily bias and regime (from data
     strictly before that day); at each killzone's leg-detection window
-    close, detect a leg; keep it only if it's valid and counter to the
+    close, detect a leg; keep it only if it's valid (the ordinary 3-5
+    candle rule, OR a shorter leg whose size is at least
+    ``pivotal_leg_size_multiple`` times the recent typical 1-minute bar
+    range -- see :func:`stdvbot.legs.is_pivotal_leg`) and counter to the
     daily bias (the "off-trend"/manipulation filter); project its
     inverse-Fibonacci levels; watch subsequent bars (up to
     ``touch_scan_bars``) for a level touch, gated by regime (trending
@@ -168,6 +188,7 @@ def generate_signals(
     regime_by_day = regime_series(
         daily, window=regime_window, trending_threshold=regime_trending_threshold
     ).to_dict()
+    reference_range = typical_bar_range(df, window=pivotal_leg_reference_window).to_numpy()
     patterns = c.detect_patterns(df)
     vwap = session_vwap(df)
 
@@ -254,7 +275,10 @@ def generate_signals(
                 if bias is None:
                     continue
                 leg = detect_leg(df, window_start, window_end)
-                if leg is None or not leg.is_valid:
+                ref = reference_range[j]
+                if leg is None or not is_pivotal_leg(
+                    leg, None if np.isnan(ref) else float(ref), pivotal_leg_size_multiple
+                ):
                     continue
                 leg_implied_bias = "down" if leg.direction == "up" else "up"
                 if leg_implied_bias != bias:

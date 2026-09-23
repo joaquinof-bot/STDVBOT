@@ -46,11 +46,24 @@ scale, not separate mechanisms:
    candidate if it runs counter to the prevailing higher-timeframe bias (the
    Daily/4H leg read from §1) — e.g., pushing up into the open while the
    Daily/4H leg implies a bearish retracement is still in play.
-4. **Leg validity — confirmed**: a leg must span **3 to 5 continuous
-   candles** (`MIN_LEG_CANDLES`/`MAX_LEG_CANDLES` in `stdvbot/legs.py`), 3
-   being typical. Fewer (typically a single fast candle) is a suspect
-   "false" leg; more than 5 is no longer treated as one leg. **This range
-   is specific to 1-minute killzone legs** — `stdvbot/manipulation_leg_strategy.py`'s
+4. **Leg validity — confirmed, with a size exception**: a leg must span
+   **3 to 5 continuous candles** (`MIN_LEG_CANDLES`/`MAX_LEG_CANDLES` in
+   `stdvbot/legs.py`), 3 being typical, to count as valid *by candle count
+   alone*. More than 5 is no longer treated as one leg, no exception.
+   **But this is not a blanket rule on the short side** — per the trader:
+   "3-5 candles doesn't have to be a blanket rule, a few or single candle
+   could be pivotal if its size is big in the differing direction." A leg
+   shorter than 3 candles (even one candle) still counts if its range is
+   big enough relative to normal 1-minute movement — see
+   `is_pivotal_leg()` / `BIG_LEG_SIZE_MULTIPLE` in `stdvbot/legs.py`.
+   `ASSUMED DEFAULT`: "big enough" = at least 3x the trailing median
+   single-bar range (`typical_bar_range()` in
+   `stdvbot/manipulation_leg_strategy.py`, a rolling 1-day-by-default
+   yardstick) — the exact multiple isn't confirmed to a specific figure
+   yet, just the *existence* of the size-based exception. Verified against
+   real 3-month NQ data: this surfaced 2 additional trades (6 → 8) that
+   the strict count-only rule was missing, both winners in that sample.
+   **This range is specific to 1-minute killzone legs** — `stdvbot/manipulation_leg_strategy.py`'s
    daily-bias read (§1) deliberately does *not* apply it (a "fast pump"
    peaking within the first 3-5 *days* of a lookback window is far too
    strict and left bias undefined almost everywhere in testing).

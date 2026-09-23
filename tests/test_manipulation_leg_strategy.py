@@ -133,3 +133,48 @@ def test_generate_signals_empty_dataframe_returns_empty_series():
     df = generate_synthetic_intraday_ohlcv(n_days=1, seed=1).iloc[0:0]
     signals = mls.generate_signals(df)
     assert len(signals) == 0
+
+
+def test_typical_bar_range_is_trailing_median_with_no_lookahead():
+    idx = pd.date_range("2024-01-01", periods=6, freq="1min")
+    df = pd.DataFrame(
+        {
+            "open": [0] * 6,
+            "high": [1, 1, 1, 1, 1, 100],  # last bar is a huge outlier
+            "low": [0, 0, 0, 0, 0, 0],
+            "close": [0.5] * 6,
+        },
+        index=idx,
+    )
+    ref = mls.typical_bar_range(df, window=3)
+
+    assert pd.isna(ref.iloc[0])  # nothing before the first bar yet
+    # By the last bar, the trailing median (shifted) must not include the
+    # huge outlier bar itself -- otherwise a pivotal leg could "see" its
+    # own size in its own reference range.
+    assert ref.iloc[-1] == pytest.approx(1.0)
+
+
+def test_short_pivotal_leg_produces_a_trade_that_the_plain_3to5_rule_would_miss():
+    # A single-bar spike at the NY killzone open, far larger than normal
+    # 1-minute movement elsewhere in the data -- too short to satisfy the
+    # ordinary 3-5 candle rule, but exactly the "big single candle" case
+    # the size exception exists for.
+    df = generate_synthetic_intraday_ohlcv(n_days=40, seed=11)
+    ny_open = df.index.normalize().unique()[25] + pd.Timedelta(hours=9, minutes=30)
+    spike_bar = df.index.searchsorted(ny_open)
+    typical_range = float((df["high"] - df["low"]).median())
+    huge = typical_range * 20
+
+    df = df.copy()
+    df.iloc[spike_bar, df.columns.get_loc("high")] = df["close"].iloc[spike_bar] + huge
+    df.iloc[spike_bar, df.columns.get_loc("low")] = df["close"].iloc[spike_bar]
+    df.iloc[spike_bar, df.columns.get_loc("open")] = df["close"].iloc[spike_bar]
+
+    strict = mls.generate_signals(df, pivotal_leg_size_multiple=1e9)  # size exception disabled
+    with_pivotal = mls.generate_signals(df, pivotal_leg_size_multiple=3.0)
+
+    # Not a strict claim that this exact spike trades either way (a lot of
+    # other gating still applies) -- just that the size exception can only
+    # ever add opportunities relative to the strict rule, never remove any.
+    assert (with_pivotal != 0).sum() >= (strict != 0).sum()

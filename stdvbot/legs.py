@@ -5,8 +5,11 @@ which parts of this module are confirmed rules vs. best-effort
 translations of an English explanation. In short:
 
   1. Within a session-open window, did a directional "leg" form, and is it
-     a *valid* leg (spans the confirmed 3-5 candle range) or a suspect
-     *false* leg (formed by fewer, typically one fast candle)?
+     a *valid* leg (spans the confirmed 3-5 candle range), OR a shorter
+     "pivotal" leg (formed in fewer candles, even a single one, but with a
+     range large enough relative to normal 1-minute movement that it still
+     counts) -- see :func:`is_pivotal_leg`. The 3-5 candle range is not a
+     blanket requirement; a short but outsized push can be just as real.
   2. Given a valid leg, where are the inverse-Fibonacci reversal levels
      projected from it — extensions *past the leg's origin*, in the
      direction opposite the leg — and how much confidence does a touch of
@@ -35,10 +38,21 @@ import pandas as pd
 DEFAULT_LEVEL_MULTIPLES = (1.0, 2.0, 2.25, 2.5, 4.0, 4.5)
 
 #: Confirmed leg-validity range: fewer than MIN_LEG_CANDLES is a suspect
-#: single/few-candle false leg; more than MAX_LEG_CANDLES is no longer
-#: treated as one leg. 3 is the typical case, 5 the observed max.
+#: single/few-candle false leg *unless* it's big enough to be "pivotal" (see
+#: is_pivotal_leg); more than MAX_LEG_CANDLES is no longer treated as one
+#: leg, no size exception -- 3 is the typical case, 5 the observed max.
 MIN_LEG_CANDLES = 3
 MAX_LEG_CANDLES = 5
+
+#: ASSUMED DEFAULT (not yet confirmed to an exact figure): a leg shorter
+#: than MIN_LEG_CANDLES still counts as "pivotal" -- real, not a false
+#: leg -- if its range is at least this many times the recent typical
+#: single 1-minute bar range. Per the trader: "a few or single candle
+#: could be pivotal if its size is big in the differing direction" -- the
+#: 3-5 candle rule was never meant as a blanket requirement, just the
+#: typical case. Tune this once there's enough real-trade feedback to
+#: calibrate it.
+BIG_LEG_SIZE_MULTIPLE = 3.0
 
 #: Killzones in scope (session-open time, local UTC-4, plus how many
 #: minutes past the open to watch for a leg to form). London is
@@ -126,6 +140,41 @@ def detect_leg(
         num_candles=int(num_candles),
         direction=direction,
     )
+
+
+def is_pivotal_leg(
+    leg: Leg,
+    reference_range: Optional[float],
+    size_multiple: float = BIG_LEG_SIZE_MULTIPLE,
+) -> bool:
+    """Whether ``leg`` should be treated as real (not a suspect false leg),
+    combining the confirmed 3-5 candle rule with a size-based exception.
+
+    Returns ``True`` if ``leg.is_valid`` (the ordinary 3-5 candle case), OR
+    if the leg is *short* (fewer than :data:`MIN_LEG_CANDLES` candles) but
+    its range is at least ``size_multiple`` times ``reference_range`` --
+    "a few or single candle could be pivotal if its size is big in the
+    differing direction." ``reference_range`` should be a measure of
+    typical single-bar range (e.g. a trailing median of 1-minute
+    high-low), computed without look-ahead by the caller.
+
+    This size exception only applies to legs that are *too short*. A leg
+    longer than :data:`MAX_LEG_CANDLES` is never pivotal regardless of
+    size -- that's "no longer one leg," a different failure mode from "too
+    fast to be real," and the trader's correction was specifically about
+    the latter.
+
+    ``reference_range`` of ``None`` or non-positive disables the size
+    exception (falls back to the plain 3-5 candle rule) -- there isn't
+    enough history yet to judge what counts as "big."
+    """
+    if leg.is_valid:
+        return True
+    if leg.num_candles >= MIN_LEG_CANDLES:
+        return False  # too long, not too short -- no size exception applies
+    if reference_range is None or reference_range <= 0:
+        return False
+    return leg.range_ >= size_multiple * reference_range
 
 
 def session_window(

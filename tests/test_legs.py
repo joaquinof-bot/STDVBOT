@@ -5,6 +5,7 @@ import pytest
 
 from stdvbot.legs import (
     Leg,
+    BIG_LEG_SIZE_MULTIPLE,
     DEFAULT_KILLZONES,
     DEFAULT_LEVEL_MULTIPLES,
     MAX_LEG_CANDLES,
@@ -13,6 +14,7 @@ from stdvbot.legs import (
     MNQ_TICK_VALUE,
     detect_leg,
     inverse_fib_levels,
+    is_pivotal_leg,
     session_window,
     zone_grade,
 )
@@ -172,3 +174,63 @@ def test_zone_grade_boundaries_and_interpolation():
 
 def test_default_level_multiples_include_observed_grid():
     assert DEFAULT_LEVEL_MULTIPLES == (1.0, 2.0, 2.25, 2.5, 4.0, 4.5)
+
+
+def _short_leg(range_):
+    return Leg(
+        origin_time=pd.Timestamp("2024-01-01 20:00"),
+        origin_price=100.0,
+        extreme_time=pd.Timestamp("2024-01-01 20:01"),
+        extreme_price=100.0 + range_,
+        num_candles=1,
+        direction="up",
+    )
+
+
+def test_is_pivotal_leg_true_for_ordinary_valid_leg_regardless_of_reference():
+    leg = Leg(
+        origin_time=pd.Timestamp("2024-01-01 20:00"),
+        origin_price=100.0,
+        extreme_time=pd.Timestamp("2024-01-01 20:03"),
+        extreme_price=101.0,
+        num_candles=3,
+        direction="up",
+    )
+    assert leg.is_valid is True
+    assert is_pivotal_leg(leg, reference_range=None) is True
+    assert is_pivotal_leg(leg, reference_range=100.0) is True  # still valid even if "small"
+
+
+def test_is_pivotal_leg_false_for_short_leg_without_reference():
+    leg = _short_leg(3.0)
+    assert leg.is_valid is False
+    assert is_pivotal_leg(leg, reference_range=None) is False
+
+
+def test_is_pivotal_leg_false_for_short_leg_that_is_not_big_enough():
+    leg = _short_leg(3.0)  # 1-candle leg, range 3.0
+    # Reference range 1.0 -> needs >= BIG_LEG_SIZE_MULTIPLE (3.0) * 1.0 = 3.0 to pass;
+    # push it just under.
+    assert is_pivotal_leg(leg, reference_range=1.01) is False
+
+
+def test_is_pivotal_leg_true_for_short_leg_that_is_big_enough():
+    leg = _short_leg(3.0)  # 1-candle leg, range 3.0
+    # Reference range 1.0 -> threshold is BIG_LEG_SIZE_MULTIPLE * 1.0 = 3.0; range meets it.
+    assert is_pivotal_leg(leg, reference_range=1.0) is True
+    assert is_pivotal_leg(leg, reference_range=1.0, size_multiple=BIG_LEG_SIZE_MULTIPLE) is True
+
+
+def test_is_pivotal_leg_size_exception_does_not_apply_to_overlong_legs():
+    # A 6-candle leg (too many, not too few) is never pivotal, no matter
+    # how large -- the size exception is specifically for short legs.
+    leg = Leg(
+        origin_time=pd.Timestamp("2024-01-01 20:00"),
+        origin_price=100.0,
+        extreme_time=pd.Timestamp("2024-01-01 20:05"),
+        extreme_price=1000.0,  # huge range
+        num_candles=6,
+        direction="up",
+    )
+    assert leg.is_valid is False
+    assert is_pivotal_leg(leg, reference_range=0.01) is False
