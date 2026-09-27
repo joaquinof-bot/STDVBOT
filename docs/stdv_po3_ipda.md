@@ -3,7 +3,8 @@
 Source PDFs (po3trader, crediting ICT / TraderDext3r): **"Standard Deviation +
 Power of Three"** and **"Liquidity Profiles + Standard Deviation Theory"**
 (IPDA data ranges). Code: `stdvbot/stdv.py` (shared), `stdvbot/po3_strategy.py`
-(`po3_stdv`), `stdvbot/ipda_strategy.py` (`ipda_stdv`). The manipulation-leg
+(`po3_stdv`), `stdvbot/ipda_strategy.py` (`ipda_stdv`),
+`stdvbot/killzone_po3_strategy.py` (`killzone_po3`, v1 legs + PO3 entries). The manipulation-leg
 strategies (`manipulation_leg`, `manipulation_leg_v2`) are untouched.
 
 ## 1. How the PDFs relate to our existing engine
@@ -58,36 +59,63 @@ max hold.
 **Not implemented:** HTF PD arrays as a reversal precondition; the 20/40/60-day,
 3-week and 3-day ranges (usable later as a bias filter).
 
-## 4. Results — real NQ, 2026-06-07 → 2026-09-22 (15.3 weeks)
+## 4. `killzone_po3` — v1's killzone legs with PO3 entries
+
+Setup detection is v1's, unchanged (killzone leg, 3-5 candles or pivotal,
+counter to daily bias, regime gating). Read through the PDF, the killzone leg
+is the *accumulation* leg and reaching its 2.0 STDV level (4.5 on trending
+days, v1's rule) is the manipulation completing. Instead of entering on that
+touch, it waits for PO3's MSS and SBZ-nested FVG retrace, then manages the
+trade exactly like `po3_stdv`. `ASSUMED DEFAULT`s: zone reached within v1's
+60-bar touch window; entry within 240 bars of the killzone.
+
+## 5. Results — real NQ, 2026-06-07 → 2026-09-22 (15.3 weeks)
 
 `python examples/compare_stdv_strategies.py --data <file>`. 1 MNQ contract
 ($2/pt), $1.24/round turn, bar-close fills for every strategy (fair
 relative comparison; optimistic in absolute terms).
 
-| Strategy | Trades | Win % | PF | Net $ | Max DD $ | Best day / total | 1st half $ | 2nd half $ |
-|---|---|---|---|---|---|---|---|---|
-| manipulation_leg (v1) | 9 | 44% | 1.35 | +173 | 377 | 1.52 | +325 | −152 |
-| manipulation_leg_v2 | 9 | 44% | 1.35 | +173 | 377 | 1.52 | +325 | −152 |
-| po3_stdv (SBZ-nested FVG) | 132 | 62% | 1.09 | +868 | **3,101** | 0.91 | +1,477 | −609 |
-| po3_stdv (any IRL) | 253 | 51% | 0.92 | −1,534 | 4,846 | — | −350 | −1,183 |
-| ipda_stdv | 144 | 44% | 1.46 | +4,224 | 1,198 | 0.41 | +4,187 | +38 |
+| Strategy | Trades | Win % | PF | Net $ | Max DD $ | 1st half $ | 2nd half $ |
+|---|---|---|---|---|---|---|---|
+| manipulation_leg (v1) = v2 | 9 | 44% | 1.35 | +173 | 377 | +325 | −152 |
+| po3_stdv (SBZ-nested FVG) | 108 | 64% | 1.19 | +1,495 | **3,267** | +1,456 | +38 |
+| po3_stdv (any IRL) | 211 | 53% | 1.02 | +297 | 3,449 | +200 | +97 |
+| ipda_stdv | 144 | 44% | 1.46 | +4,224 | 1,198 | +4,187 | +38 |
+| killzone_po3 | 2 | 50% | 0.20 | −339 | 424 | −424 | +84 |
+
+**MFF Pro 50K, fresh eval started on each of 93 trading days** (1 MNQ,
+additive rebasing, replayed to the end of the data):
+
+| Strategy | Passed | Failed (MLL) | Unresolved | Pass rate (resolved) |
+|---|---|---|---|---|
+| v1 / v2 | 0 | 0 | 93 | — |
+| po3_stdv (nested) | 5 | 33 | 55 | 13% |
+| po3_stdv (any IRL) | 0 | 46 | 47 | 0% |
+| ipda_stdv | 17 | 0 | 76 | 100% — but only starts in the first ~3 weeks |
+| killzone_po3 | 0 | 0 | 93 | — |
+
+**`killzone_po3` funnel:** 185 killzone windows → 38 legs pass v1's filters
+→ 15 reach the 2.0 zone within 60 min → 9 get an MSS → 2 get an SBZ-nested
+FVG retrace. Stacking PO3's entry on v1's filters mostly removes trades.
 
 Read this with the following, which matter more than the headline:
 
 - **No strategy shows a demonstrated edge.** Every one either has too few
-  trades (v1/v2) or loses most/all of its result in the second half.
-- **IPDA's result is fragile.** ~72% of its net ($3,057) came from 21 trades
-  held through the 17:00 daily break or a weekend; the other 123 net $1,167.
-  Median trade −$24; without its top 5 winners, +$717. Nearly all of it came
-  from June–July. If the prop account must be flat by the daily close, most
-  of this result doesn't exist.
-- **PO3's max drawdown ($3,101) exceeds the $2,000 MLL on one contract**,
-  and it's −$1,718 without its top 5 trades.
-- Five variants plus per-profile / per-candle breakdowns were run on the same
+  trades (v1/v2, killzone_po3) or made essentially all of its result in
+  June–July and was flat in August–September.
+- **PO3 alone fails the MFF eval far more often than it passes** (33 vs. 5
+  across start dates); a single eval started 2026-06-07 happens to pass,
+  which is the misleading version of the same data. Its max drawdown
+  exceeds the $2,000 MLL on one contract.
+- **IPDA's result is fragile.** ~72% of its net came from 21 trades held
+  through the 17:00 daily break or a weekend; median trade −$24; without
+  its top 5 winners, +$717. If the account must be flat by the daily close,
+  most of this result doesn't exist.
+- Six variants plus per-profile / per-candle breakdowns were run on the same
   15 weeks, so the best-looking line is biased upward. Don't pick a
-  sub-slice (e.g. IPDA continuation, +$2,614 on 25 trades) off this table.
+  sub-slice off these tables.
 
-## 5. Backtester fix found during this work
+## 6. Fixes found during this work
 
 `backtest._extract_trades` reported each trade's entry at the close of the
 first *held* bar, while the equity curve (correctly) earns from the signal
@@ -96,3 +124,10 @@ bar's close — dropping one bar's move from every trade row, `win_rate`, and
 and pinned by `test_trade_returns_reconcile_with_equity_curve`. Earlier
 per-trade figures for v1 (e.g. "+$77 gross, 5W/4L" on this data) were wrong;
 corrected: **+$184.50 gross, 4W/5L**.
+
+`po3_stdv`'s first version re-armed a setup on the next 5m bar after the move
+had already reached its 2.5 target without an entry, allowing late entries
+after the distribution was done (26 of its original 132 trades). A PO3 whose
+move runs without us now ends for that candle; pinned by
+`test_po3_does_not_rearm_after_the_move_runs_without_an_entry` (which fails
+on the old code). Net went from +$868 to +$1,495.

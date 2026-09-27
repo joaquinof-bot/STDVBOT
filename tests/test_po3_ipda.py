@@ -161,3 +161,84 @@ def test_no_look_ahead(module):
         part, _ = module.run(df.iloc[:m])
         cut = m - 6  # the final 5m bucket of the truncated run may be partial
         pd.testing.assert_series_equal(part.iloc[:cut], full.iloc[:cut])
+
+
+def test_po3_does_not_rearm_after_the_move_runs_without_an_entry():
+    # Regression guard: after MSS, price runs through the 2.5 target (106.5)
+    # with no retrace, pulls back, and prints fresh FVGs below target. That
+    # PO3 is done -- the first version re-armed the same setup on the next
+    # bar and entered late (12:24 here), after the distribution completed.
+    df = _path(
+        [
+            ("2024-01-02 09:00", 100.0), ("2024-01-02 10:00", 100.0),
+            ("2024-01-02 10:15", 98.0), ("2024-01-02 10:30", 99.0), ("2024-01-02 10:50", 96.0),
+            ("2024-01-02 11:10", 99.5), ("2024-01-02 11:40", 108.0), ("2024-01-02 12:00", 102.5),
+            ("2024-01-02 12:20", 105.5), ("2024-01-02 12:30", 104.0), ("2024-01-02 13:00", 109.0),
+        ],
+        end="2024-01-02 13:00",
+    )
+    _, log = po3_strategy.run(df, entry_mode="any_irl")
+    assert log == []
+
+
+def _killzone_po3_day(prior_trend_up=True, reach_zone=True):
+    # Three prior days (rising -> daily bias "down", so an up killzone leg is
+    # counter-trend, i.e. manipulation), then the test day:
+    #   09:30-09:33 up leg 100 -> 102 (3 candles, R=2): 2.0 level = 96.
+    #   Manipulation down: swing high 98.5 at 10:10, low 95.5 (zone reached).
+    #   MSS: close back above 98.5. PO3 off 98.5 -> 95.5 (R=3): SBZ 101.5-103,
+    #   target 2.5 = 106. Retrace into the SBZ FVG, then run to target.
+    step = 5.0 if prior_trend_up else -5.0
+    prior = [_path([(f"2024-01-0{d} 09:00", 90.0 + step * (d - 1)), (f"2024-01-0{d} 11:00", 90.0 + step * (d - 1))],
+                   end=f"2024-01-0{d} 11:00") for d in (1, 2, 3)]
+    low = 95.5 if reach_zone else 96.5
+    day = _path(
+        [
+            ("2024-01-04 09:00", 100.0), ("2024-01-04 09:30", 100.0), ("2024-01-04 09:33", 102.0),
+            ("2024-01-04 09:36", 101.5), ("2024-01-04 10:00", 97.0), ("2024-01-04 10:10", 98.5),
+            ("2024-01-04 10:25", low), ("2024-01-04 10:45", 99.0), ("2024-01-04 11:05", 103.5),
+            ("2024-01-04 11:15", 102.0), ("2024-01-04 11:45", 106.5), ("2024-01-04 12:30", 106.5),
+        ],
+        end="2024-01-04 12:30",
+    )
+    return pd.concat(prior + [day])
+
+
+def test_killzone_po3_enters_on_mss_and_sbz_retrace_after_the_zone():
+    from stdvbot import killzone_po3_strategy
+
+    _, log = killzone_po3_strategy.run(_killzone_po3_day(), daily_bias_lookback=2, extend_to_terminus=False)
+    assert len(log) == 1
+    t = log[0]
+    assert (t["killzone"], t["leg_direction"], t["direction"]) == ("ny", "up", "long")
+    assert (t["anchor0"], t["anchor1"]) == (pytest.approx(98.5), pytest.approx(95.5))
+    assert t["target"] == pytest.approx(106.0)
+    assert pd.Timestamp("2024-01-04 11:05") < t["entry_time"] < pd.Timestamp("2024-01-04 11:15")
+    assert t["exit_reason"] == "target"
+
+
+def test_killzone_po3_needs_the_zone():
+    from stdvbot import killzone_po3_strategy
+
+    # Same MSS and FVG retrace, but the manipulation stops short of the 2.0 level.
+    _, log = killzone_po3_strategy.run(_killzone_po3_day(reach_zone=False), daily_bias_lookback=2)
+    assert log == []
+
+
+def test_killzone_po3_keeps_v1s_off_trend_filter():
+    from stdvbot import killzone_po3_strategy
+
+    # Prior days falling -> daily bias "up" -> an up killzone leg agrees with it: not manipulation.
+    _, log = killzone_po3_strategy.run(_killzone_po3_day(prior_trend_up=False), daily_bias_lookback=2)
+    assert log == []
+
+
+def test_killzone_po3_no_look_ahead():
+    from stdvbot import killzone_po3_strategy
+
+    df = generate_synthetic_intraday_ohlcv(n_days=12, seed=5)
+    full, log = killzone_po3_strategy.run(df, daily_bias_lookback=3)
+    for m in (6000, 11000, 15000):
+        part, _ = killzone_po3_strategy.run(df.iloc[:m], daily_bias_lookback=3)
+        cut = m - 6
+        pd.testing.assert_series_equal(part.iloc[:cut], full.iloc[:cut])

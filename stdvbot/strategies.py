@@ -16,6 +16,7 @@ import pandas as pd
 
 from . import candles as c
 from . import ipda_strategy
+from . import killzone_po3_strategy
 from . import manipulation_leg_strategy as mls
 from . import manipulation_leg_strategy_v2 as mls_v2
 from . import po3_strategy
@@ -257,6 +258,30 @@ class IPDAStdvStrategy(Strategy):
         )
 
 
+@dataclass
+class KillzonePO3Strategy(Strategy):
+    """v1's killzone manipulation-leg setups with PO3 entries (MSS, then an
+    SBZ-nested FVG retrace) instead of v1's level touch -- see
+    :mod:`stdvbot.killzone_po3_strategy`. Needs 1-minute data."""
+
+    name: str = "killzone_po3"
+    daily_bias_lookback: int = 20
+    zone_multiple: float = 2.0
+    touch_scan_bars: int = 60
+    entry_window_bars: int = 240
+    max_hold_bars: int = 240
+
+    def generate_signals(self, df: pd.DataFrame) -> pd.Series:
+        return killzone_po3_strategy.generate_signals(
+            df,
+            daily_bias_lookback=self.daily_bias_lookback,
+            zone_multiple=self.zone_multiple,
+            touch_scan_bars=self.touch_scan_bars,
+            entry_window_bars=self.entry_window_bars,
+            max_hold_bars=self.max_hold_bars,
+        )
+
+
 def _entries_to_positions(
     long_entry: pd.Series, short_entry: pd.Series, max_hold: int = 0
 ) -> pd.Series:
@@ -308,6 +333,7 @@ STRATEGY_REGISTRY = {
     "manipulation_leg_v2": ManipulationLegStrategyV2,
     "po3_stdv": PO3StdvStrategy,
     "ipda_stdv": IPDAStdvStrategy,
+    "killzone_po3": KillzonePO3Strategy,
 }
 
 

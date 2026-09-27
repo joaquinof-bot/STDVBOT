@@ -129,7 +129,9 @@ caught while building it.
 
 **`po3_stdv`** (4H Power of Three) and **`ipda_stdv`** (12-hour IPDA data
 range profiles) translate two Standard Deviation PDFs into separate
-strategies built on the same Fib projection as `manipulation_leg`. See
+strategies built on the same Fib projection as `manipulation_leg`;
+**`killzone_po3`** keeps `manipulation_leg`'s killzone setups but enters with
+PO3's market-structure-shift + Silver Bullet Zone trigger. See
 `docs/stdv_po3_ipda.md` for the translation, a side-by-side comparison, and
 real-data results; `examples/compare_stdv_strategies.py` reruns the
 comparison on any 1-minute file.

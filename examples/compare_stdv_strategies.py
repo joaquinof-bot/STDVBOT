@@ -22,10 +22,11 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from stdvbot import ipda_strategy, po3_strategy  # noqa: E402
+from stdvbot import ipda_strategy, killzone_po3_strategy, po3_strategy  # noqa: E402
 from stdvbot.backtest import run_backtest  # noqa: E402
 from stdvbot.data import load_databento_parent_ohlcv_csv, load_ohlcv_csv  # noqa: E402
 from stdvbot.legs import MNQ_TICK_SIZE, MNQ_TICK_VALUE  # noqa: E402
+from stdvbot.propfirm import MFF_PRO_50K, check_compliance  # noqa: E402
 from stdvbot.strategies import get_strategy  # noqa: E402
 
 POINT_VALUE = MNQ_TICK_VALUE / MNQ_TICK_SIZE
@@ -49,6 +50,37 @@ def trade_table(df, signals, commission):
     t["gross"] = t["points"] * POINT_VALUE
     t["net"] = t["gross"] - commission
     return t
+
+
+def mff_eval(t, trading_days):
+    """Replay realized P&L (booked on exit date) against MFF Pro 50K on 1 MNQ."""
+    booked = t.groupby(pd.to_datetime(t["exit_time"]).dt.normalize())["net"].sum()
+    daily = MFF_PRO_50K.starting_balance + booked.reindex(trading_days, fill_value=0.0).cumsum()
+    out = check_compliance(daily, MFF_PRO_50K)
+    return f"{out.status} {out.outcome_date.date()}" if out.status != "in_progress" else f"in_progress ({out.total_profit:+.0f})"
+
+
+def mff_rolling(t, trading_days):
+    """Start a fresh MFF Pro 50K eval (1 MNQ) on every trading day and replay
+    forward to the end of the data. Additive rebasing -- fixed-contract P&L."""
+    booked = t.groupby(pd.to_datetime(t["exit_time"]).dt.normalize())["net"].sum()
+    daily_pnl = booked.reindex(trading_days, fill_value=0.0)
+    passed = failed = open_ = 0
+    days_to_pass = []
+    for i in range(len(trading_days)):
+        eq = MFF_PRO_50K.starting_balance + daily_pnl.iloc[i:].cumsum()
+        out = check_compliance(eq, MFF_PRO_50K)
+        if out.status == "passed":
+            passed += 1
+            days_to_pass.append(trading_days.get_loc(out.outcome_date) - i + 1)
+        elif out.status.startswith("failed"):
+            failed += 1
+        else:
+            open_ += 1
+    resolved = passed + failed
+    return {"starts": len(trading_days), "passed": passed, "failed": failed, "unresolved": open_,
+            "pass_rate_resolved": round(passed / resolved, 2) if resolved else None,
+            "median_days_to_pass": int(pd.Series(days_to_pass).median()) if days_to_pass else None}
 
 
 def summarize(name, t, weeks):
@@ -94,9 +126,14 @@ def main():
     runs["po3_stdv (any IRL after SBZ)"] = po3_strategy.run(df, entry_mode="any_irl")[0]
     ipda_pos, ipda_log = ipda_strategy.run(df)
     runs["ipda_stdv (both profiles)"] = ipda_pos
+    funnel = {}
+    kz_pos, kz_log = killzone_po3_strategy.run(df, funnel=funnel)
+    runs["killzone_po3 (v1 legs + PO3 entry)"] = kz_pos
 
     tables = {name: trade_table(df, sig, args.commission) for name, sig in runs.items()}
+    trading_days = pd.DatetimeIndex(df.index.normalize().unique())
     summary = pd.DataFrame([summarize(n, t, weeks) for n, t in tables.items()])
+    summary["MFF_Pro_50K_eval"] = [mff_eval(t, trading_days) if not t.empty else "-" for t in tables.values()]
     with pd.option_context("display.width", 250, "display.max_columns", None):
         print(summary.to_string(index=False))
 
@@ -112,13 +149,19 @@ def main():
                            "2nd_n": int((~first).sum())})
         print(pd.DataFrame(halves).to_string(index=False))
 
+        print("\nMFF Pro 50K eval started on every trading day (1 MNQ, replayed to end of data):")
+        print(pd.DataFrame([{"strategy": n, **mff_rolling(t, trading_days)} for n, t in tables.items() if not t.empty]).to_string(index=False))
+
+        print("\nkillzone_po3 funnel (setups surviving each stage):", funnel)
+
         for label, log, t in (("ipda_stdv by profile", ipda_log, tables["ipda_stdv (both profiles)"]),
-                              ("po3_stdv by 4H candle", po3_log, tables["po3_stdv (SBZ-nested FVG)"])):
+                              ("po3_stdv by 4H candle", po3_log, tables["po3_stdv (SBZ-nested FVG)"]),
+                              ("killzone_po3 trades", kz_log, tables["killzone_po3 (v1 legs + PO3 entry)"])):
             # Strategy logs and backtester trades line up one-to-one (the
             # strategies always leave a flat bar between trades).
             if not log or len(log) != len(t):
                 continue
-            key = "profile" if "profile" in log[0] else "candle"
+            key = "profile" if "profile" in log[0] else ("killzone" if "killzone" in log[0] else "candle")
             tags = pd.Series([row[key] for row in log])
             if key == "candle":
                 tags = pd.to_datetime(tags).dt.strftime("%H:00")
