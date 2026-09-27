@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stdvbot"
+version = "0.1.0"
+description = "A candlestick-pattern-derived trading strategy toolkit with a leak-free vectorized backtester."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = [
+    "pandas>=1.5",
+    "numpy>=1.23",
+]
+
+[project.optional-dependencies]
+plot = ["matplotlib>=3.6"]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+stdvbot = "stdvbot.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["stdvbot*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
