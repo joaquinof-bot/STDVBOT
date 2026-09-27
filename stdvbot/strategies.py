@@ -15,8 +15,10 @@ import numpy as np
 import pandas as pd
 
 from . import candles as c
+from . import ipda_strategy
 from . import manipulation_leg_strategy as mls
 from . import manipulation_leg_strategy_v2 as mls_v2
+from . import po3_strategy
 
 
 def _rsi(close: pd.Series, window: int = 14) -> pd.Series:
@@ -213,6 +215,48 @@ class ManipulationLegStrategyV2(Strategy):
         )
 
 
+@dataclass
+class PO3StdvStrategy(Strategy):
+    """4H Power of Three + Standard Deviation, per the "Standard Deviation +
+    Power of Three" PDF -- see :mod:`stdvbot.po3_strategy`. Needs 1-minute
+    data (structure is read on 5m, trades managed on 1m)."""
+
+    name: str = "po3_stdv"
+    entry_mode: str = "nested"
+    target_multiple: float = 2.5
+    extend_to_terminus: bool = True
+    max_hold_bars: int = 240
+
+    def generate_signals(self, df: pd.DataFrame) -> pd.Series:
+        return po3_strategy.generate_signals(
+            df,
+            entry_mode=self.entry_mode,
+            target_multiple=self.target_multiple,
+            extend_to_terminus=self.extend_to_terminus,
+            max_hold_bars=self.max_hold_bars,
+        )
+
+
+@dataclass
+class IPDAStdvStrategy(Strategy):
+    """Intraday 12-hour IPDA data range + Standard Deviation profiles, per the
+    "Liquidity Profiles + Standard Deviation Theory" PDF -- see
+    :mod:`stdvbot.ipda_strategy`. Needs 1-minute data."""
+
+    name: str = "ipda_stdv"
+    lookback_hours: int = 12
+    profiles: tuple = ("reversal", "continuation")
+    max_hold_bars: int = 720
+
+    def generate_signals(self, df: pd.DataFrame) -> pd.Series:
+        return ipda_strategy.generate_signals(
+            df,
+            lookback_hours=self.lookback_hours,
+            profiles=self.profiles,
+            max_hold_bars=self.max_hold_bars,
+        )
+
+
 def _entries_to_positions(
     long_entry: pd.Series, short_entry: pd.Series, max_hold: int = 0
 ) -> pd.Series:
@@ -262,6 +306,8 @@ STRATEGY_REGISTRY = {
     "composite": CompositeScoreStrategy,
     "manipulation_leg": ManipulationLegStrategy,
     "manipulation_leg_v2": ManipulationLegStrategyV2,
+    "po3_stdv": PO3StdvStrategy,
+    "ipda_stdv": IPDAStdvStrategy,
 }
 
 

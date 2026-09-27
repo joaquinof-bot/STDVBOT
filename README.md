@@ -127,6 +127,13 @@ allows the setup through restricted to the A+ level only. See
 `docs/manipulation_leg_strategy.md` §9 for the full reasoning and a bug
 caught while building it.
 
+**`po3_stdv`** (4H Power of Three) and **`ipda_stdv`** (12-hour IPDA data
+range profiles) translate two Standard Deviation PDFs into separate
+strategies built on the same Fib projection as `manipulation_leg`. See
+`docs/stdv_po3_ipda.md` for the translation, a side-by-side comparison, and
+real-data results; `examples/compare_stdv_strategies.py` reruns the
+comparison on any 1-minute file.
+
 ## Backtester design (read this before trusting a number)
 
 - **No look-ahead:** a strategy's signal for bar *i* is decided from
