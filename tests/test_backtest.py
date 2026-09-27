@@ -65,9 +65,37 @@ def test_trade_extraction_matches_manual_calc():
     assert len(result.trades) == 1
     trade = result.trades.iloc[0]
     assert trade["side"] == "long"
-    assert trade["entry_price"] == pytest.approx(110.0)
+    # Signal decided on bar 0's close (100) -> the equity curve earns bars 1
+    # and 2 (100 -> 121), so that's the trade.
+    assert trade["entry_price"] == pytest.approx(100.0)
     assert trade["exit_price"] == pytest.approx(121.0)
-    assert trade["return"] == pytest.approx(121.0 / 110.0 - 1.0)
+    assert trade["return"] == pytest.approx(121.0 / 100.0 - 1.0)
+
+
+def test_trade_returns_reconcile_with_equity_curve():
+    # Regression guard: the trade log once reported entry at the first *held*
+    # bar's close, silently dropping that bar's move from every trade while
+    # the equity curve (correctly) included it.
+    # Long-only: a held long compounds bar returns exactly into its simple
+    # return. (A short doesn't -- the equity curve rebalances it per bar --
+    # so shorts are checked on entry price below instead.)
+    df = _price_df([100.0, 104.0, 99.0, 101.0, 97.0, 95.0, 98.0, 103.0, 102.0])
+    signals = pd.Series([1, 1, 0, 0, 1, 1, 1, 0, 0], index=df.index)
+    result = run_backtest(df, signals, initial_capital=10_000.0, fee_bps=0.0, slippage_bps=0.0)
+
+    compounded = float(np.prod(1.0 + result.trades["return"].to_numpy()))
+    assert compounded == pytest.approx(result.equity_curve.iloc[-1] / 10_000.0)
+
+
+def test_short_trade_entry_is_signal_bar_close():
+    df = _price_df([100.0, 104.0, 99.0, 101.0, 97.0])
+    signals = pd.Series([0, -1, -1, 0, 0], index=df.index)
+    result = run_backtest(df, signals, fee_bps=0.0, slippage_bps=0.0)
+
+    trade = result.trades.iloc[0]
+    assert trade["side"] == "short"
+    assert trade["entry_price"] == pytest.approx(104.0)  # close of the bar the short was decided on
+    assert trade["exit_price"] == pytest.approx(101.0)
 
 
 def test_short_position_earns_negative_of_return():

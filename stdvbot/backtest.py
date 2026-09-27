@@ -114,7 +114,11 @@ def _extract_trades(effective_pos: pd.Series, close: pd.Series, index: pd.Index)
         while j < n and pos[j] == side:
             j += 1
         exit_i = j - 1
-        entry_px = px[entry_i]
+        # The equity curve starts earning on bar entry_i's close-to-close
+        # return, i.e. from the *previous* bar's close (the bar the signal
+        # was decided on) -- report that as the entry so each trade's return
+        # reconciles with the equity curve.
+        entry_px = px[entry_i - 1] if entry_i > 0 else px[entry_i]
         exit_px = px[exit_i]
         ret = side * (exit_px / entry_px - 1.0)
         rows.append(
