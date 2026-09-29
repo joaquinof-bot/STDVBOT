@@ -8,3 +8,4 @@ dist/
 venv/
 *.png
 .DS_Store
+*.xlsx
